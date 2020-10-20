@@ -1,30 +1,41 @@
-// Smart Control v0.1
-// ACHTUNG: SCHALTER UND SERIAL GLEICHZEITIG GIBT CHAOS (WIP)
+// Smart Control v0.2
+// WARNING: SWICTHES AND SERIAL INTEROPERABILITY IS WIP
  
 #include <Arduino.h>
 #include <string.h>     // For strcmp()
 #include <EEPROM.h>     // For saving motor positions
 
-#define   MOTOR_OFF       HIGH
-#define   MOTOR_ON        LOW
-#define   MOTOR_UP        HIGH
-#define   MOTOR_DOWN      LOW
+// ----<CUSTOMIZABLE>----
+// These have to have the same length
+#define   INPUT_PINS        3, 4
+#define   OUTPUT_PINS       7, 8
+#define   MOTOR_UP_DUR    -10000, -10000
+#define   MOTOR_DOWN_DUR  10000, 10000
+// --<END CUSTOMIZABLE>--
 
-#define   MAX_DATA_LEN    11     // Max length of Serial transmission data (3 + USED_SWITCHES / 2)
-#define   TERMINATOR_CHAR '\r'   // Termination char for Serial message
-#define   FIRST_PIN       2      // The first GPIO pin you want to use
-#define   MAX_SWITCHES    16     // Max amount of switches, do not change
-#define   USED_SWITCHES   2      // Number of switches currently connected
-#define   MAX_MOTOR_TIME  10000  // Time it takes the motor to completetely open/close in ms
+// Maybe required if position calculation is too imprecise
+//#define   MOTOR_DELAY        50    // delay until motor reacts to input
 
-uint8_t relay_outputs[USED_SWITCHES];                 // For setRelays() function
-unsigned long EEPROM_timer_start[USED_SWITCHES / 2];  // For EEPROM calculation
-unsigned long message_age;                            // For calculating end of fakeSwitch duration
-int fakeSwitch_new_position[USED_SWITCHES / 2];       // For saving fakeSwitch position in EEPROM
-double fakeSwitch_duration[USED_SWITCHES / 2];        // For faking switch press duration
-double max_fakeSwitch_duration;                       // For resetting fakingSwitches
-bool fakingSwitches = false;                          // For managing when to accept serial vs switches
-bool processingSwitches = false;                      // For managing when to accept serial vs switches
+#define   MOTOR_OFF         HIGH
+#define   MOTOR_ON          LOW
+#define   MOTOR_UP          LOW
+#define   MOTOR_DOWN        HIGH
+#define   MAX_DATA_LEN      11     // Max length of Serial transmission data (3 + relay_amount / 2)
+#define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
+
+const uint8_t input_pins[] = {INPUT_PINS};                  // Array of input pin numbers
+const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output pin numbers
+const uint8_t relay_amount = sizeof(input_pins);            // Number of relays in use
+const long motor_durations[2][relay_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
+
+uint8_t relay_outputs[2][relay_amount];                     // For setRelays() function
+unsigned long EEPROM_timer_start[relay_amount / 2];         // For EEPROM calculation
+unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
+int new_position[relay_amount / 2];                         // For saving new motor position in EEPROM after serial command
+unsigned int command_duration[relay_amount / 2];            // For calculating relay switch duration according to serial
+unsigned int max_command_duration;                          // For resetting executingCommand
+bool executingCommand = false;                                  // For managing when to accept serial vs switches
+bool processingSwitches = false;                            // For managing when to accept serial vs switches
 
 // the buffer for the received chars
 // 1 extra char for the terminating character "\0"
@@ -36,18 +47,18 @@ void processSwitches(void);
 void setRelays(void);
 bool addData(char);
 void processData(void);
-void initFakeSwitches(void);
+void processSerialCommand(void);
 void getEEPROM(void);
-void processFakeSwitches(void);
+void processCommandTimers(void);
 
 void setup() {
   //  Serial.begin(9600);
 
   // Turn all relays off on program start
-  for (int i = 0; i < USED_SWITCHES; i++) {
-    pinMode(i + FIRST_PIN, INPUT_PULLUP);
-    pinMode(i + FIRST_PIN + MAX_SWITCHES, OUTPUT);
-    relay_outputs[i] = HIGH;
+  for (int i = 0; i < relay_amount; i++) {
+    pinMode(input_pins[i], INPUT_PULLUP);
+    pinMode(output_pins[i], OUTPUT);
+    relay_outputs[0][i] = MOTOR_OFF;
   }
 }
 
@@ -58,20 +69,20 @@ void loop() {
 
   // Make sure that switches are not currently faked via serial
   // Still run though if a switch is currently held
-  if (!fakingSwitches or processingSwitches) {
+  if (!executingCommand or processingSwitches) {
     // Here we write all switch states into the bool array relay_outputs
     processSwitches();
   }
 
   // Make sure that switches are not already being faked and..
   // ..that no switch is currently held
-  // if (!fakingSwitches and !processingSwitches) {
+  // if (!executingCommand and !processingSwitches) {
   //   // Here we process data from serial line
   //   processSerialData();
   // }
 
   // Checks whether fakeSwitch timers ran out and turns of motors via relay_outputs array
-  //if (fakingSwitches) {processFakeSwitches();}
+  //if (executingCommand) {processCommandTimers();}
 
   // Here we set all relays to the values in relay_outputs
   setRelays();
@@ -79,44 +90,38 @@ void loop() {
 }
 // Function to process physical switches and set relay_outputs array accordingly
 void processSwitches(void) {
-  for (int j = 0; j < USED_SWITCHES; j += 2) {
-    if (digitalRead(j + FIRST_PIN) == LOW) { // Hoch-schalter gedrückt
+  for (int i = 0; i < relay_amount / 2; i += 2) {
+    if (digitalRead(input_pins[i * 2]) == LOW) { // up-switch pressed
       processingSwitches = true;
-      if (EEPROM_timer_start[j] == 0) {EEPROM_timer_start[j] = millis();}
+      if (EEPROM_timer_start[i] == 0) {EEPROM_timer_start[i] = millis();}
 
-      relay_outputs[j] = MOTOR_ON;
-      relay_outputs[j + 1] = MOTOR_UP;
-    } else if (digitalRead(j + FIRST_PIN + 1) == LOW) { // Runter-schalter gedrückt
+      relay_outputs[0][i] = MOTOR_ON;
+      relay_outputs[1][i] = MOTOR_UP;
+    } else if (digitalRead(input_pins[i * 2 + 1]) == LOW) { // down-switch pressed
         processingSwitches = true;
-        if (EEPROM_timer_start[j + 1] == 0) {EEPROM_timer_start[j + 1] = millis();}
+        if (EEPROM_timer_start[i + 1] == 0) {EEPROM_timer_start[i + 1] = millis();}
 
-        relay_outputs[j] = MOTOR_ON;
-        relay_outputs[j + 1] = MOTOR_DOWN;
-    } else { // kein Schalter gedrückt
+        relay_outputs[0][i + 1] = MOTOR_ON;
+        relay_outputs[1][i + 1] = MOTOR_DOWN;
+    } else { // no switch pressed
         processingSwitches = false;
-        relay_outputs[j] = MOTOR_OFF;
+        relay_outputs[0][i] = MOTOR_OFF;
 
-        if (EEPROM_timer_start[j / 2] > 0) { // If switch has been pressed and released
-          // Calculate the relative movement of the motor in percentage points
-          unsigned short tmp_relative_movement = ((millis() - EEPROM_timer_start[j / 2]) / MAX_MOTOR_TIME) * 100;
+        if (EEPROM_timer_start[i] > 0) { // If switch has been pressed and released
+          
           // Get previous motor position from EEPROM
-          unsigned short tmp_EEPROM = EEPROM.read(j / 2);
+          uint8_t tmp_EEPROM = EEPROM.read(i);
 
-          if (relay_outputs[j + 1]) { // Richtung hoch
-            if (tmp_EEPROM - tmp_relative_movement >= 0) {
-              EEPROM.write(j / 2, tmp_EEPROM - tmp_relative_movement);
-            } else {
-              EEPROM.write(j / 2, 0);
-            }
-            
-          } else { // Richtung runter
-              if (tmp_EEPROM + tmp_relative_movement <= 100) {
-                EEPROM.write(j / 2, tmp_EEPROM + tmp_relative_movement);
-              } else {
-                EEPROM.write(j / 2, 100);
-              }
+          // Calculate the relative movement of the motor in percentage points
+          int8_t tmp_relative_movement = ((millis() - EEPROM_timer_start[i]) / motor_durations[relay_outputs[1][i]][i]) * 100;
+          if (0 <= (tmp_EEPROM + tmp_relative_movement) && (tmp_EEPROM + tmp_relative_movement) <= 100) { // if new percentage value is legal (between 0 and 100)
+            EEPROM.write(i, tmp_EEPROM + tmp_relative_movement); // save new value too EEPROM
+          } else if ((tmp_EEPROM + tmp_relative_movement) < 0) {
+            EEPROM.write(i, 0);
+          } else if (100 < (tmp_EEPROM + tmp_relative_movement)) {
+            EEPROM.write(i, 100);
           }
-          EEPROM_timer_start[j / 2] = 0;
+          EEPROM_timer_start[i] = 0;
         }
     }
   }
@@ -124,8 +129,9 @@ void processSwitches(void) {
 
 // Function to set motor relays according to the relay_outputs array
 void setRelays(void) {
-  for (int k = 0; k < USED_SWITCHES; k++) {
-    digitalWrite(k + MAX_SWITCHES + FIRST_PIN, relay_outputs[k]);
+  for (int i = 0; i < relay_amount / 2; i +=2) {
+    digitalWrite(output_pins[i + 1], relay_outputs[1][i]); // set direction relay state
+    digitalWrite(output_pins[i], relay_outputs[0][i]);     // set power relay state
   }
 }
 
@@ -183,17 +189,17 @@ bool addData(char nextChar) {
 // strcmp compares two strings and returns 0 if they are the same.
 void processData(void) {
     if (g_buffer[0] == 's' and g_buffer[1] == 'e' and g_buffer[2] == 't') { // If buffer begins with "set"
-       initFakeSwitches();
+       processSerialCommand();
     }
     // Send current motor positions via Serial
     // ACHTUNG: SCHALTER DARF WAHRSCHEINLICH NICHT GEDRÜCKT SEIN
     // (vielleicht gehts jetzt doch?)
     else if (strcmp(g_buffer, "get") == 0 ) {                               // If buffer equals "get"
-       for (int m = 0; m < USED_SWITCHES / 2 - 1; m++) {
+       for (int m = 0; m < relay_amount / 2 - 1; m++) {
         Serial.print(EEPROM.read(m));
         Serial.print(",");
        }
-       Serial.println(EEPROM.read(USED_SWITCHES / 2 - 1));
+       Serial.println(EEPROM.read(relay_amount / 2 - 1));
     }
     else if (strcmp(g_buffer, "test") == 0 ) {                              // If buffer equals "test" (unused)
        Serial.println("OK");}
@@ -205,53 +211,53 @@ void processData(void) {
 }
 
 // Function to move motors according to the received Serial data
-void initFakeSwitches() {
-  fakingSwitches = true;
-  max_fakeSwitch_duration = 0;
+void processSerialCommand() {
+  executingCommand = true;
+  max_command_duration = 0;
   message_age = millis();
-  for (int l = 0; l < USED_SWITCHES / 2; l++) {
+  for (int i = 0; i < relay_amount / 2; i++) {
     // Even though that should never happen, make sure motor is not currently running!
-    if (!relay_outputs[l * 2]) {
-      int tmp_EEPROM = EEPROM.read(l);
-      if (g_buffer[l] == 'c') {
+    if (relay_outputs[0][i] == MOTOR_OFF) {
+      int tmp_EEPROM = EEPROM.read(i);
+      if (g_buffer[i] == 'c') {
         if (tmp_EEPROM != 100) {
-          relay_outputs[l * 2] = MOTOR_ON;
-          relay_outputs[l * 2 + 1] = MOTOR_DOWN;
-          fakeSwitch_new_position[l] = 100 - tmp_EEPROM;
-          fakeSwitch_duration[l] = fakeSwitch_new_position[l] / 100 * MAX_MOTOR_TIME;
+          relay_outputs[0][i] = MOTOR_ON;
+          relay_outputs[1][i + 1] = MOTOR_DOWN;
+          new_position[i] = 100 - tmp_EEPROM;
+          command_duration[i] = new_position[i] / 100 * motor_durations[1][i];
         }
-      } else if (tmp_EEPROM < (int)g_buffer[l] * 10) {
-          relay_outputs[l * 2] = MOTOR_ON;
-          relay_outputs[l * 2 + 1] = MOTOR_DOWN;
-          fakeSwitch_new_position[l] = ((int)g_buffer[l] * 10) - tmp_EEPROM;
-          fakeSwitch_duration[l] = fakeSwitch_new_position[l] / 100 * MAX_MOTOR_TIME;
-      } else if (tmp_EEPROM > (int)g_buffer[l] * 10) {
-          relay_outputs[l * 2] = MOTOR_ON;
-          relay_outputs[l * 2 + 1] = MOTOR_UP;
-          fakeSwitch_new_position[l] = tmp_EEPROM - ((int)g_buffer[l] * 10);
-          fakeSwitch_duration[l] = fakeSwitch_new_position[l] / 100 * MAX_MOTOR_TIME;
+      } else if (tmp_EEPROM < (int)g_buffer[i] * 10) {
+          relay_outputs[0][i] = MOTOR_ON;
+          relay_outputs[1][i + 1] = MOTOR_DOWN;
+          new_position[i] = ((int)g_buffer[i] * 10) - tmp_EEPROM;
+          command_duration[i] = new_position[i] / 100 * motor_durations[1][i];
+      } else if (tmp_EEPROM > (int)g_buffer[i] * 10) {
+          relay_outputs[0][i] = MOTOR_ON;
+          relay_outputs[1][i + 1] = MOTOR_UP;
+          new_position[i] = tmp_EEPROM - ((int)g_buffer[i] * 10);
+          command_duration[i] = new_position[i] / 100 * motor_durations[0][i];
       } else {
-          relay_outputs[l * 2] = MOTOR_OFF;
+          relay_outputs[0][i] = MOTOR_OFF;
       }
-      max_fakeSwitch_duration = fakeSwitch_duration[l];
+      max_command_duration = command_duration[i];
     }
   }
 }
 
-// Function to process the fakeSwitch timers
-void processFakeSwitches() {
-  // Reset fakingSwitches if all timers ran out
-  if (millis() - message_age >= max_fakeSwitch_duration) {
-    fakingSwitches = false;
+// Function to process the command timers
+void processCommandTimers() {
+  // Reset executingCommand if all timers ran out
+  if (millis() - message_age >= max_command_duration) {
+    executingCommand = false;
     message_age = 0;
-    max_fakeSwitch_duration = 0;
+    max_command_duration = 0;
   }
   // turn off motor if its respective timer ran out
-  for (int m = 0; m < USED_SWITCHES / 2; m++) {
-    if (millis() - message_age >= fakeSwitch_duration[m]) {
-      relay_outputs[m * 2] = MOTOR_OFF;
-      EEPROM.write(m, fakeSwitch_new_position[m]);
-      fakeSwitch_duration[m] = 0;
+  for (int i = 0; i < relay_amount / 2; i++) {
+    if (millis() - message_age >= command_duration[i]) {
+      relay_outputs[0][i] = MOTOR_OFF;
+      EEPROM.write(i, new_position[i]);
+      command_duration[i] = 0;
     }
   }
 }
