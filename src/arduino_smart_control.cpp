@@ -7,10 +7,10 @@
 
 // ----<CUSTOMIZABLE>----
 // These have to have the same length
-#define   INPUT_PINS        3, 4
-#define   OUTPUT_PINS       7, 8
-#define   MOTOR_UP_DUR    -10000, -10000
-#define   MOTOR_DOWN_DUR  10000, 10000
+#define   INPUT_PINS        22, 23
+#define   OUTPUT_PINS       26, 27
+#define   MOTOR_UP_DUR    -10000
+#define   MOTOR_DOWN_DUR  10000
 // --<END CUSTOMIZABLE>--
 
 // Maybe required if position calculation is too imprecise
@@ -52,13 +52,14 @@ void getEEPROM(void);
 void processCommandTimers(void);
 
 void setup() {
-  //  Serial.begin(9600);
+  Serial.begin(9600);
 
   // Turn all relays off on program start
   for (int i = 0; i < relay_amount; i++) {
     pinMode(input_pins[i], INPUT_PULLUP);
     pinMode(output_pins[i], OUTPUT);
     relay_outputs[0][i] = MOTOR_OFF;
+    relay_outputs[1][i] = MOTOR_UP;
   }
 }
 
@@ -76,13 +77,13 @@ void loop() {
 
   // Make sure that switches are not already being faked and..
   // ..that no switch is currently held
-  // if (!executingCommand and !processingSwitches) {
-  //   // Here we process data from serial line
-  //   processSerialData();
-  // }
+  if (!executingCommand and !processingSwitches) {
+    // Here we process data from serial line
+    processSerialData();
+  }
 
-  // Checks whether fakeSwitch timers ran out and turns of motors via relay_outputs array
-  //if (executingCommand) {processCommandTimers();}
+  // Checks whether fakeSwitch timers ran out and turns off motors via relay_outputs array
+  if (executingCommand) {processCommandTimers();}
 
   // Here we set all relays to the values in relay_outputs
   setRelays();
@@ -90,7 +91,7 @@ void loop() {
 }
 // Function to process physical switches and set relay_outputs array accordingly
 void processSwitches(void) {
-  for (int i = 0; i < relay_amount / 2; i += 2) {
+  for (int i = 0; i < relay_amount / 2; i++) {
     if (digitalRead(input_pins[i * 2]) == LOW) { // up-switch pressed
       processingSwitches = true;
       if (EEPROM_timer_start[i] == 0) {EEPROM_timer_start[i] = millis();}
@@ -99,10 +100,10 @@ void processSwitches(void) {
       relay_outputs[1][i] = MOTOR_UP;
     } else if (digitalRead(input_pins[i * 2 + 1]) == LOW) { // down-switch pressed
         processingSwitches = true;
-        if (EEPROM_timer_start[i + 1] == 0) {EEPROM_timer_start[i + 1] = millis();}
+        if (EEPROM_timer_start[i] == 0) {EEPROM_timer_start[i] = millis();}
 
-        relay_outputs[0][i + 1] = MOTOR_ON;
-        relay_outputs[1][i + 1] = MOTOR_DOWN;
+        relay_outputs[0][i] = MOTOR_ON;
+        relay_outputs[1][i] = MOTOR_DOWN;
     } else { // no switch pressed
         processingSwitches = false;
         relay_outputs[0][i] = MOTOR_OFF;
@@ -113,8 +114,9 @@ void processSwitches(void) {
           uint8_t tmp_EEPROM = EEPROM.read(i);
 
           // Calculate the relative movement of the motor in percentage points
-          int8_t tmp_relative_movement = ((millis() - EEPROM_timer_start[i]) / motor_durations[relay_outputs[1][i]][i]) * 100;
-          if (0 <= (tmp_EEPROM + tmp_relative_movement) && (tmp_EEPROM + tmp_relative_movement) <= 100) { // if new percentage value is legal (between 0 and 100)
+          int tmp_relative_movement = ((millis() - EEPROM_timer_start[i]) / (float)motor_durations[relay_outputs[1][i]][i]) * 100;
+          Serial.println(tmp_relative_movement);
+          if (0 <= (tmp_EEPROM + tmp_relative_movement) && (tmp_EEPROM + tmp_relative_movement) <= 100) { // if new percentage value is between 0 and 100
             EEPROM.write(i, tmp_EEPROM + tmp_relative_movement); // save new value too EEPROM
           } else if ((tmp_EEPROM + tmp_relative_movement) < 0) {
             EEPROM.write(i, 0);
@@ -138,13 +140,11 @@ void setRelays(void) {
 // Function to process incoming Serial data
 void processSerialData(void) {
   int data;
-  bool dataReady;
   while ( Serial.available() > 0 ) {
-      data = Serial.read();
-      dataReady = addData((char)data);  
-      if ( dataReady )
-        delay(50);
+      data = Serial.read();addData((char)data);  
+      if (data == TERMINATOR_CHAR) {
         processData();
+      }
   }
 }
 
@@ -188,7 +188,7 @@ bool addData(char nextChar) {
 // process the data - command
 // strcmp compares two strings and returns 0 if they are the same.
 void processData(void) {
-    if (g_buffer[0] == 's' and g_buffer[1] == 'e' and g_buffer[2] == 't') { // If buffer begins with "set"
+    if (g_buffer[0] == 's' && g_buffer[1] == 'e' && g_buffer[2] == 't') { // If buffer begins with "set"
        processSerialCommand();
     }
     // Send current motor positions via Serial
@@ -202,7 +202,14 @@ void processData(void) {
        Serial.println(EEPROM.read(relay_amount / 2 - 1));
     }
     else if (strcmp(g_buffer, "test") == 0 ) {                              // If buffer equals "test" (unused)
-       Serial.println("OK");}
+      Serial.println("OK");
+    }
+    else if (strcmp(g_buffer, "reset") == 0 ) {                              // If buffer equals "reset"
+      for (int i=0; i < relay_amount / 2; i++) {
+        EEPROM.write(i, 0);
+        Serial.println("DONE");
+      }
+    }
     else {
       //DEBUG
       //Serial.print("Unknown command ");
@@ -219,19 +226,19 @@ void processSerialCommand() {
     // Even though that should never happen, make sure motor is not currently running!
     if (relay_outputs[0][i] == MOTOR_OFF) {
       int tmp_EEPROM = EEPROM.read(i);
-      if (g_buffer[i] == 'c') {
+      if (g_buffer[3 + i] == 'c') {
         if (tmp_EEPROM != 100) {
           relay_outputs[0][i] = MOTOR_ON;
           relay_outputs[1][i + 1] = MOTOR_DOWN;
           new_position[i] = 100 - tmp_EEPROM;
           command_duration[i] = new_position[i] / 100 * motor_durations[1][i];
         }
-      } else if (tmp_EEPROM < (int)g_buffer[i] * 10) {
+      } else if (tmp_EEPROM < (int)g_buffer[3 + i] * 10) {
           relay_outputs[0][i] = MOTOR_ON;
           relay_outputs[1][i + 1] = MOTOR_DOWN;
           new_position[i] = ((int)g_buffer[i] * 10) - tmp_EEPROM;
           command_duration[i] = new_position[i] / 100 * motor_durations[1][i];
-      } else if (tmp_EEPROM > (int)g_buffer[i] * 10) {
+      } else if (tmp_EEPROM > (int)g_buffer[3 + i] * 10) {
           relay_outputs[0][i] = MOTOR_ON;
           relay_outputs[1][i + 1] = MOTOR_UP;
           new_position[i] = tmp_EEPROM - ((int)g_buffer[i] * 10);
