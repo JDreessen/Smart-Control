@@ -7,10 +7,10 @@
 
 // ----<CUSTOMIZABLE>----
 // These have to have the same length
-#define   INPUT_PINS        22, 23
-#define   OUTPUT_PINS       26, 27
-#define   MOTOR_UP_DUR    -10000
-#define   MOTOR_DOWN_DUR  10000
+#define   INPUT_PINS        24, 25, 22, 23
+#define   OUTPUT_PINS       28, 29, 26, 27
+#define   MOTOR_UP_DUR    -10000, -10000
+#define   MOTOR_DOWN_DUR  10000, 10000
 // --<END CUSTOMIZABLE>--
 
 // Maybe required if position calculation is too imprecise
@@ -31,7 +31,7 @@ const long motor_durations[2][relay_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}}
 uint8_t relay_outputs[2][relay_amount];                     // For setRelays() function
 unsigned long EEPROM_timer_start[relay_amount / 2];         // For EEPROM calculation
 unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
-int new_position[relay_amount / 2];                         // For saving new motor position in EEPROM after serial command
+int position_delta[relay_amount / 2];                         // For saving new motor position in EEPROM after serial command
 unsigned int command_duration[relay_amount / 2];            // For calculating relay switch duration according to serial
 unsigned int max_command_duration;                          // For resetting executingCommand
 bool executingCommand = false;                                  // For managing when to accept serial vs switches
@@ -45,7 +45,7 @@ char g_buffer[MAX_DATA_LEN + 1];
 void processSerialData(void);
 void processSwitches(void);
 void setRelays(void);
-bool addData(char);
+void addData(char);
 void processData(void);
 void processSerialCommand(void);
 void getEEPROM(void);
@@ -131,8 +131,18 @@ void processSwitches(void) {
 
 // Function to set motor relays according to the relay_outputs array
 void setRelays(void) {
-  for (int i = 0; i < relay_amount / 2; i +=2) {
+  // Serial.print("Relay amount: ");
+  // Serial.println(relay_amount);
+  for (int i = 0; i < relay_amount; i +=2) {
+    // Serial.print("writing ");
+    // Serial.print(relay_outputs[1][i]);
+    // Serial.print(" to ");
+    // Serial.println(output_pins[i + 1]);
     digitalWrite(output_pins[i + 1], relay_outputs[1][i]); // set direction relay state
+    // Serial.print("writing ");
+    // Serial.print(relay_outputs[0][i]);
+    // Serial.print(" to ");
+    // Serial.println(output_pins[i]);
     digitalWrite(output_pins[i], relay_outputs[0][i]);     // set power relay state
   }
 }
@@ -151,21 +161,21 @@ void processSerialData(void) {
 // Put received character into the buffer.
 // When a complete command is received return true, otherwise return false.
 // The command is terminated by Enter character ("\r")
-bool addData(char nextChar) {  
+void addData(char nextChar) {  
   // This is position in the buffer where we put next char.
   // Static var will remember its value across function calls.
   static uint8_t currentIndex = 0;
 
     // Ignore some characters - new line, space and tabs
     if ((nextChar == '\n') || (nextChar == ' ') || (nextChar == '\t'))
-        return false;
+        return;
 
     // If we receive Enter character...
     if (nextChar == TERMINATOR_CHAR) {
         // ...terminate the string by NULL character "\0" and return true
         g_buffer[currentIndex] = '\0';
         currentIndex = 0;
-        return true;
+        return;
     }
 
     // For normal character just store it in the buffer and increment Index
@@ -179,10 +189,10 @@ bool addData(char nextChar) {
       // see if it is valid command or not
       g_buffer[MAX_DATA_LEN] = '\0';
       currentIndex = 0;
-      return true;
+      return;
     }
 
-    return false;
+    return;
 }
 
 // process the data - command
@@ -222,27 +232,44 @@ void processSerialCommand() {
   executingCommand = true;
   max_command_duration = 0;
   message_age = millis();
+  Serial.println(g_buffer);
   for (int i = 0; i < relay_amount / 2; i++) {
     // Even though that should never happen, make sure motor is not currently running!
     if (relay_outputs[0][i] == MOTOR_OFF) {
       int tmp_EEPROM = EEPROM.read(i);
+      Serial.print("EEPROM: ");
+      Serial.println(tmp_EEPROM);
+      Serial.print("Buffer val: ");
+      Serial.println(((int)g_buffer[3 + i] - 48) * 10);
       if (g_buffer[3 + i] == 'c') {
         if (tmp_EEPROM != 100) {
           relay_outputs[0][i] = MOTOR_ON;
-          relay_outputs[1][i + 1] = MOTOR_DOWN;
-          new_position[i] = 100 - tmp_EEPROM;
-          command_duration[i] = new_position[i] / 100 * motor_durations[1][i];
+          relay_outputs[1][i] = MOTOR_DOWN;
+          position_delta[i] = 100 - tmp_EEPROM;
+          Serial.print("Delta: ");
+          Serial.println(position_delta[i]);
+          command_duration[i] = position_delta[i] / 100.0 * motor_durations[1][i];
+          Serial.println(command_duration[i]);
         }
-      } else if (tmp_EEPROM < (int)g_buffer[3 + i] * 10) {
+      } else if (tmp_EEPROM < ((int)g_buffer[3 + i] - 48) * 10) {
+          Serial.println("runterfahren");
           relay_outputs[0][i] = MOTOR_ON;
-          relay_outputs[1][i + 1] = MOTOR_DOWN;
-          new_position[i] = ((int)g_buffer[i] * 10) - tmp_EEPROM;
-          command_duration[i] = new_position[i] / 100 * motor_durations[1][i];
-      } else if (tmp_EEPROM > (int)g_buffer[3 + i] * 10) {
+          relay_outputs[1][i] = MOTOR_DOWN;
+          position_delta[i] = (((int)g_buffer[3 + i] - 48) * 10) - tmp_EEPROM;
+          Serial.print("Delta: ");
+          Serial.println(position_delta[i]);
+          command_duration[i] = position_delta[i] / 100.0 * motor_durations[1][i];
+          Serial.println(command_duration[i]);
+      } else if (tmp_EEPROM > ((int)g_buffer[3 + i] - 48) * 10) {
+          Serial.println("hochfahren");
           relay_outputs[0][i] = MOTOR_ON;
-          relay_outputs[1][i + 1] = MOTOR_UP;
-          new_position[i] = tmp_EEPROM - ((int)g_buffer[i] * 10);
-          command_duration[i] = new_position[i] / 100 * motor_durations[0][i];
+          relay_outputs[1][i] = MOTOR_UP;
+          position_delta[i] = (tmp_EEPROM - (((int)g_buffer[3 + i] - 48) * 10)) * -1;
+          Serial.print("Delta: ");
+          Serial.println(position_delta[i]);
+          command_duration[i] = position_delta[i] / 100.0 * motor_durations[0][i];
+          Serial.print("Delta time: ");
+          Serial.println(command_duration[i]);
       } else {
           relay_outputs[0][i] = MOTOR_OFF;
       }
@@ -262,8 +289,9 @@ void processCommandTimers() {
   // turn off motor if its respective timer ran out
   for (int i = 0; i < relay_amount / 2; i++) {
     if (millis() - message_age >= command_duration[i]) {
+      Serial.println("Timer finished.");
       relay_outputs[0][i] = MOTOR_OFF;
-      EEPROM.write(i, new_position[i]);
+      EEPROM.write(i, EEPROM.read(i) + position_delta[i]);
       command_duration[i] = 0;
     }
   }
