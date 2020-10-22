@@ -4,3 +4,4 @@
 # TODO
 - add README.md
 - understand markdown format ^^
+- decrease RAM usage
