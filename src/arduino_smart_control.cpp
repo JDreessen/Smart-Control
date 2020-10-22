@@ -28,14 +28,14 @@ const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output p
 const uint8_t relay_amount = sizeof(input_pins);            // Number of relays in use
 const long motor_durations[2][relay_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
 
-uint8_t relay_outputs[2][relay_amount];                     // For setRelays() function
+uint8_t relay_outputs[2][relay_amount / 2];                     // For setRelays() function
 unsigned long EEPROM_timer_start[relay_amount / 2];         // For EEPROM calculation
 unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
-int position_delta[relay_amount / 2];                         // For saving new motor position in EEPROM after serial command
+int position_delta[relay_amount / 2];                       // For saving new motor position in EEPROM after serial command
 unsigned int command_duration[relay_amount / 2];            // For calculating relay switch duration according to serial
 unsigned int max_command_duration;                          // For resetting executingCommand
-bool executingCommand = false;                                  // For managing when to accept serial vs switches
-bool processingSwitches = false;                            // For managing when to accept serial vs switches
+bool executingCommand = false;                              // For managing when to accept serial vs switches
+uint8_t activeSwitches = 0;                                 // For managing when to accept serial vs switches
 
 // the buffer for the received chars
 // 1 extra char for the terminating character "\0"
@@ -58,6 +58,8 @@ void setup() {
   for (int i = 0; i < relay_amount; i++) {
     pinMode(input_pins[i], INPUT_PULLUP);
     pinMode(output_pins[i], OUTPUT);
+  }
+  for (int i = 0; i < relay_amount / 2; i++) {
     relay_outputs[0][i] = MOTOR_OFF;
     relay_outputs[1][i] = MOTOR_UP;
   }
@@ -70,20 +72,22 @@ void loop() {
 
   // Make sure that switches are not currently faked via serial
   // Still run though if a switch is currently held
-  if (!executingCommand or processingSwitches) {
+  if (!executingCommand or activeSwitches > 0) {
     // Here we write all switch states into the bool array relay_outputs
     processSwitches();
   }
 
+  ///*
   // Make sure that switches are not already being faked and..
   // ..that no switch is currently held
-  if (!executingCommand and !processingSwitches) {
+  if (!executingCommand and activeSwitches == 0) {
     // Here we process data from serial line
     processSerialData();
   }
 
   // Checks whether fakeSwitch timers ran out and turns off motors via relay_outputs array
   if (executingCommand) {processCommandTimers();}
+  //*/
 
   // Here we set all relays to the values in relay_outputs
   setRelays();
@@ -93,19 +97,19 @@ void loop() {
 void processSwitches(void) {
   for (int i = 0; i < relay_amount / 2; i++) {
     if (digitalRead(input_pins[i * 2]) == LOW) { // up-switch pressed
-      processingSwitches = true;
+      activeSwitches++;
       if (EEPROM_timer_start[i] == 0) {EEPROM_timer_start[i] = millis();}
 
       relay_outputs[0][i] = MOTOR_ON;
       relay_outputs[1][i] = MOTOR_UP;
     } else if (digitalRead(input_pins[i * 2 + 1]) == LOW) { // down-switch pressed
-        processingSwitches = true;
+        activeSwitches++;
         if (EEPROM_timer_start[i] == 0) {EEPROM_timer_start[i] = millis();}
 
         relay_outputs[0][i] = MOTOR_ON;
         relay_outputs[1][i] = MOTOR_DOWN;
     } else { // no switch pressed
-        processingSwitches = false;
+        activeSwitches--;
         relay_outputs[0][i] = MOTOR_OFF;
 
         if (EEPROM_timer_start[i] > 0) { // If switch has been pressed and released
@@ -115,6 +119,9 @@ void processSwitches(void) {
 
           // Calculate the relative movement of the motor in percentage points
           int tmp_relative_movement = ((millis() - EEPROM_timer_start[i]) / (float)motor_durations[relay_outputs[1][i]][i]) * 100;
+          Serial.print("Index: ");
+          Serial.print(i);
+          Serial.print(" |  Delta: ");
           Serial.println(tmp_relative_movement);
           if (0 <= (tmp_EEPROM + tmp_relative_movement) && (tmp_EEPROM + tmp_relative_movement) <= 100) { // if new percentage value is between 0 and 100
             EEPROM.write(i, tmp_EEPROM + tmp_relative_movement); // save new value too EEPROM
@@ -133,17 +140,17 @@ void processSwitches(void) {
 void setRelays(void) {
   // Serial.print("Relay amount: ");
   // Serial.println(relay_amount);
-  for (int i = 0; i < relay_amount; i +=2) {
+  for (int i = 0; i < relay_amount / 2; i++) {
     // Serial.print("writing ");
     // Serial.print(relay_outputs[1][i]);
     // Serial.print(" to ");
     // Serial.println(output_pins[i + 1]);
-    digitalWrite(output_pins[i + 1], relay_outputs[1][i]); // set direction relay state
+    digitalWrite(output_pins[i * 2 + 1], relay_outputs[1][i]); // set direction relay state
     // Serial.print("writing ");
     // Serial.print(relay_outputs[0][i]);
     // Serial.print(" to ");
     // Serial.println(output_pins[i]);
-    digitalWrite(output_pins[i], relay_outputs[0][i]);     // set power relay state
+    digitalWrite(output_pins[i * 2], relay_outputs[0][i]);     // set power relay state
   }
 }
 
