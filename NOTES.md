@@ -1,7 +1,8 @@
 # BUGS
-- Serial still buggy, processCommandTimers function doesn't make a lot of sense
+- 
 
 # TODO
 - add README.md
 - understand markdown format ^^
 - decrease RAM usage
+- (maybe) turn pins and durations into structs (for readability) / structs with unions (for efficiency)
