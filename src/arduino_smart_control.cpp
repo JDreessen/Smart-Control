@@ -87,32 +87,30 @@ void processSwitches(void) {
       bitSet(activeSwitches, i);
       relay_outputs[0][i] = MOTOR_ON;
       relay_outputs[1][i] = MOTOR_UP;
-      updateRelays();
       if (EEPROM_timer_start[i] == 0) {
         EEPROM_timer_start[i] = millis();
       } else if (millis() - EEPROM_timer_start[i] > 1.0 * abs(motor_durations[0][i])) {
         relay_outputs[0][i] = MOTOR_OFF;
-        relay_outputs[1][i] = MOTOR_UP;
-        updateRelays();
+        relay_outputs[1][i] = MOTOR_DOWN;
       }
+      updateRelays();
     } else if (digitalRead(input_pins[i * 2 + 1]) == LOW) { // down-switch pressed
       bitSet(activeSwitches, i + 8);
       relay_outputs[0][i] = MOTOR_ON;
       relay_outputs[1][i] = MOTOR_DOWN;
-      updateRelays();
       if (EEPROM_timer_start[i] == 0) {
         EEPROM_timer_start[i] = millis();
       } else if (millis() - EEPROM_timer_start[i] > 1.0 * motor_durations[1][i]) {
         relay_outputs[0][i] = MOTOR_OFF;
         relay_outputs[1][i] = MOTOR_DOWN; // turn all relays off
-        updateRelays();
       }
+      updateRelays();
     } else { // no switch pressed
       bitClear(activeSwitches, i);
       bitClear(activeSwitches, i + 8);
-      relay_outputs[0][i] = MOTOR_OFF;
-      relay_outputs[1][i] = MOTOR_DOWN;
-      updateRelays();
+      // relay_outputs[0][i] = MOTOR_OFF;
+      // relay_outputs[1][i] = MOTOR_DOWN;
+      // updateRelays();
       if (EEPROM_timer_start[i] > 0) { // If switch has been pressed and released
         
         // Get previous motor position from EEPROM
@@ -140,6 +138,9 @@ void processSwitches(void) {
         }
         EEPROM_timer_start[i] = 0;
       }
+      relay_outputs[0][i] = MOTOR_OFF;
+      relay_outputs[1][i] = MOTOR_DOWN;
+      updateRelays();
     }
   }
 }
