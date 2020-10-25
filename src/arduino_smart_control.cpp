@@ -84,25 +84,25 @@ void processSwitches(void) {
   for (int i = 0; i < motor_amount; i++) {
     if (digitalRead(input_pins[i * 2]) == LOW) { // up-switch pressed
       bitSet(activeSwitches, i);
+      relay_outputs[0][i] = MOTOR_ON;
+      relay_outputs[1][i] = MOTOR_UP;
+      
       if (EEPROM_timer_start[i] == 0) {
         EEPROM_timer_start[i] = millis();
       } else if (millis() - EEPROM_timer_start[i] > 1.0 * abs(motor_durations[0][i])) {
         relay_outputs[0][i] = MOTOR_OFF;
         relay_outputs[1][i] = MOTOR_UP;
-      } else {
-        relay_outputs[0][i] = MOTOR_ON;
-        relay_outputs[1][i] = MOTOR_UP;
       }
     } else if (digitalRead(input_pins[i * 2 + 1]) == LOW) { // down-switch pressed
       bitSet(activeSwitches, i + 8);
+      relay_outputs[0][i] = MOTOR_ON;
+      relay_outputs[1][i] = MOTOR_DOWN;
+      
       if (EEPROM_timer_start[i] == 0) {
         EEPROM_timer_start[i] = millis();
-      } else if (millis() - EEPROM_timer_start[i] > 1.0 * motor_durations[0][i]) {
+      } else if (millis() - EEPROM_timer_start[i] > 1.0 * motor_durations[1][i]) {
         relay_outputs[0][i] = MOTOR_OFF;
         relay_outputs[1][i] = MOTOR_DOWN; // turn all relays off
-      } else {
-        relay_outputs[0][i] = MOTOR_ON;
-        relay_outputs[1][i] = MOTOR_DOWN;
       }
     } else { // no switch pressed
       bitClear(activeSwitches, i);
@@ -122,6 +122,7 @@ void processSwitches(void) {
         } else {
           tmp_relative_movement = (abs(motor_durations[relay_outputs[1][i]][i]) / motor_durations[relay_outputs[1][i]][i]) * 100;
         }
+        
         Serial.print(F("Index: "));
         Serial.print(i);
         Serial.print(F(" |  Delta: "));
