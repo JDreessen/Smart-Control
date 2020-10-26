@@ -45,6 +45,7 @@ void processCommandTimers(void);
 
 void setup() {
   Serial.begin(9600);
+  Serial1.begin(115200);
 
   // Turn all relays off on program start
   for (int i = 0; i < relay_amount; i++) {
@@ -170,8 +171,8 @@ void updateRelays(void) {
 // Function to process incoming Serial data
 void processSerialData(void) {
   int data;
-  while ( Serial.available() > 0 ) {
-    data = Serial.read();addData((char)data);  
+  while ( Serial1.available() > 0 ) {
+    data = Serial1.read();addData((char)data);  
     if (data == TERMINATOR_CHAR) {
       processData();
     }
