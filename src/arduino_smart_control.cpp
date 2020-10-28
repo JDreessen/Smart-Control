@@ -1,6 +1,8 @@
 // Smart Control v0.3
 // WARNING: SWICTHES AND SERIAL INTEROPERABILITY IS WIP
  
+#define DEBUG false
+
 #include <Arduino.h>
 #include <string.h>     // For strcmp()
 #include <EEPROM.h>     // For saving motor positions
@@ -44,8 +46,10 @@ void getEEPROM(void);
 void processCommandTimers(void);
 
 void setup() {
-  Serial.begin(9600);
-  Serial1.begin(115200);
+  #if DEBUG
+    Serial.begin(9600);
+  #endif
+  Serial1.begin(57600);
 
   // Turn all relays off on program start
   for (int i = 0; i < relay_amount; i++) {
@@ -77,9 +81,6 @@ void loop() {
       processSerialData();
     }
   }
-  // Here we set all relays to the values in relay_outputs
-  //updateRelays();
-  //Serial.println(millis());
 }
 // Function to process physical switches and set relay_outputs array accordingly
 void processSwitches(void) {
@@ -109,11 +110,7 @@ void processSwitches(void) {
     } else { // no switch pressed
       bitClear(activeSwitches, i);
       bitClear(activeSwitches, i + 8);
-      // relay_outputs[0][i] = MOTOR_OFF;
-      // relay_outputs[1][i] = MOTOR_DOWN;
-      // updateRelays();
       if (EEPROM_timer_start[i] > 0) { // If switch has been pressed and released
-        
         // Get previous motor position from EEPROM
         uint8_t tmp_EEPROM = EEPROM.read(i);
 
@@ -125,11 +122,12 @@ void processSwitches(void) {
         } else {
           tmp_relative_movement = (abs(motor_durations[relay_outputs[1][i]][i]) / motor_durations[relay_outputs[1][i]][i]) * 100;
         }
-        
-        Serial.print(F("Index: "));
-        Serial.print(i);
-        Serial.print(F(" |  Delta: "));
-        Serial.println(tmp_relative_movement);
+        #if DEBUG
+          Serial.print(F("Index: "));
+          Serial.print(i);
+          Serial.print(F(" |  Delta: "));
+          Serial.println(tmp_relative_movement);
+        #endif
         if (0 <= (tmp_EEPROM + tmp_relative_movement) && (tmp_EEPROM + tmp_relative_movement) <= 100) { // if new percentage value is between 0 and 100
           EEPROM.write(i, tmp_EEPROM + tmp_relative_movement); // save new value too EEPROM
         } else if ((tmp_EEPROM + tmp_relative_movement) < 0) {
@@ -148,22 +146,24 @@ void processSwitches(void) {
 
 // Function to set motor relays according to the relay_outputs array
 void updateRelays(void) {
-  // Serial.print("Relay amount: ");
-  // Serial.println(relay_amount);
+  #if DEBUG
+    Serial.print("Relay amount: ");
+    Serial.println(relay_amount);
+  #endif
   for (int i = 0; i < motor_amount; i++) {
-    /* debug
-    Serial.print("writing ");
-    Serial.print(relay_outputs[1][i]);
-    Serial.print(" to ");
-    Serial.println(output_pins[i + 1]);
-    debug */
+    #if DEBUG
+      Serial.print("writing ");
+      Serial.print(relay_outputs[1][i]);
+      Serial.print(" to ");
+      Serial.println(output_pins[i + 1]);
+    #endif
     digitalWrite(output_pins[i * 2 + 1], relay_outputs[1][i]); // set direction relay state
-    /*
-    Serial.print("writing ");
-    Serial.print(relay_outputs[0][i]);
-    Serial.print(" to ");
-    Serial.println(output_pins[i]);
-    */
+    #if DEBUG
+      Serial.print("writing ");
+      Serial.print(relay_outputs[0][i]);
+      Serial.print(" to ");
+      Serial.println(output_pins[i]);
+    #endif
     digitalWrite(output_pins[i * 2], relay_outputs[0][i]);     // set power relay state
   }
 }
@@ -220,31 +220,36 @@ void processData(void) {
     // If buffer begins with "set" and is of correct length
     if (g_buffer[0] == 's' && g_buffer[1] == 'e' && g_buffer[2] == 't' && g_buffer[motor_amount + 2] != '\0' && g_buffer[motor_amount + 3] == '\0') {
       processSerialCommand();
+      Serial1.write(1);
+      for (int i = 0; i < 7; i++) {
+        Serial1.write(0);
+      }
     }
     // Send current motor positions via Serial
     // ACHTUNG: SCHALTER DARF WAHRSCHEINLICH NICHT GEDRÜCKT SEIN
     // (vielleicht gehts jetzt doch?)
     else if (strcmp(g_buffer, "get") == 0 ) {                               // If buffer equals "get"
-      for (int m = 0; m < motor_amount - 1; m++) {
-        Serial.print(EEPROM.read(m));
-        Serial.print(",");
+      for (int i = 0; i < motor_amount; i++) {
+        Serial1.write(EEPROM.read(i));
       }
-      Serial.println(EEPROM.read(motor_amount - 1));
-    }
-    else if (strcmp(g_buffer, "test") == 0 ) {                              // If buffer equals "test" (unused)
-      Serial.println("OK");
+      for (int i = 0; i < 8 - motor_amount; i++) {
+        Serial1.write(0);
+      }
     }
     else if (strcmp(g_buffer, "reset") == 0 ) {                              // If buffer equals "reset"
       for (int i=0; i < motor_amount; i++) {
         EEPROM.write(i, 0);
       }
-      Serial.println(F("DONE"));
-
+      Serial1.write(2);
+      for (int i = 0; i < 7; i++) {
+        Serial1.write(0);
+      }
     }
     else {
-      //DEBUG
-      //Serial.print("Unknown command ");
-      //Serial.println(g_buffer);
+      Serial1.write(3);
+      for (int i = 0; i < 7; i++) {
+        Serial1.write(0);
+      }
     }
 }
 
@@ -253,48 +258,68 @@ void processSerialCommand() {
   max_command_duration = 0;
   message_age = millis();
   executingCommand = true;
-  Serial.println(g_buffer); //debug
+  #if DEBUG
+    Serial.println(g_buffer);
+  #endif
   for (int i = 0; i < motor_amount; i++) {
     // Even though that should never happen, make sure motor is not currently running!
     if (relay_outputs[0][i] == MOTOR_OFF) {
       int tmp_EEPROM = EEPROM.read(i);
-      Serial.print(F("Index: ")); //debug
-      Serial.println(i); //debug
-      Serial.print(F("EEPROM: ")); //debug
-      Serial.println(tmp_EEPROM); //debug
-      Serial.print(F("Buffer val: ")); //debug
-      Serial.println(((int)g_buffer[3 + i] - 48) * 10);
+      #if DEBUG
+        Serial.print(F("Index: "));
+        Serial.println(i);
+        Serial.print(F("EEPROM: "));
+        Serial.println(tmp_EEPROM
+        Serial.print(F("Buffer val: "));
+        Serial.println(((int)g_buffer[3 + i] - 48) * 10);
+      #endif
       if (g_buffer[3 + i] == 'c' && tmp_EEPROM != 100) {
         relay_outputs[0][i] = MOTOR_ON;
         relay_outputs[1][i] = MOTOR_DOWN;
         updateRelays();
         position_delta[i] = 100 - tmp_EEPROM;
-        Serial.print(F("Delta: ")); //debug
-        Serial.println(position_delta[i]);
+        #if DEBUG
+          Serial.print(F("Delta: "));
+          Serial.println(position_delta[i]);
+        #endif
         command_duration[i] = position_delta[i] / 100.0 * motor_durations[1][i];
-        Serial.println(command_duration[i]);
+        #if DEBUG
+          Serial.println(command_duration[i]);
+        #endif
       } else if (tmp_EEPROM < ((int)g_buffer[3 + i] - 48) * 10) {
-        //Serial.println("runterfahren"); //debug
+        #if DEBUG
+          Serial.println("runterfahren");
+        #endif
         relay_outputs[0][i] = MOTOR_ON;
         relay_outputs[1][i] = MOTOR_DOWN;
         updateRelays();
         position_delta[i] = (((int)g_buffer[3 + i] - 48) * 10) - tmp_EEPROM;
-        Serial.print(F("Delta: ")); //debug
-        Serial.println(position_delta[i]);
+        #if DEBUG
+          Serial.print(F("Delta: "));
+          Serial.println(position_delta[i]);
+        #endif
         command_duration[i] = position_delta[i] / 100.0 * motor_durations[1][i];
-        Serial.print(F("Delta time: ")); //debug
-        Serial.println(command_duration[i]);
+        #if DEBUG
+          Serial.print(F("Delta time: "));
+          Serial.println(command_duration[i]);
+        #endif
       } else if (tmp_EEPROM > ((int)g_buffer[3 + i] - 48) * 10) {
-        //Serial.println("hochfahren"); //debug
+        #if DEBUG
+          Serial.println("hochfahren");
+        #endif
         relay_outputs[0][i] = MOTOR_ON;
         relay_outputs[1][i] = MOTOR_UP;
         updateRelays();
         position_delta[i] = (tmp_EEPROM - (((int)g_buffer[3 + i] - 48) * 10)) * -1;
-        Serial.print(F("Delta: ")); //debug
-        Serial.println(position_delta[i]);
+        #if DEBUG
+          Serial.print(F("Delta: "));
+          Serial.println(position_delta[i]);
+        #endif
         command_duration[i] = position_delta[i] / 100.0 * motor_durations[0][i];
-        Serial.print(F("Delta time: ")); //debug
-        Serial.println(command_duration[i]);
+        #if DEBUG
+          Serial.print(F("Delta time: "));
+          Serial.println(command_duration[i]);
+        #endif
       } else {
         relay_outputs[0][i] = MOTOR_OFF;
         relay_outputs[1][i] = MOTOR_DOWN;
@@ -309,7 +334,6 @@ void processSerialCommand() {
 
 // Function to process the command timers
 void processCommandTimers() {
-  //Serial.println("Executing command.."); //debug
   // Reset executingCommand if all timers ran out
   if (millis() - message_age >= max_command_duration) {
     executingCommand = false;
@@ -321,7 +345,9 @@ void processCommandTimers() {
     //stupid fix
     if (command_duration[i] > 0) {
       if (millis() - message_age >= command_duration[i]) {
-        Serial.println(F("Timer finished.")); //debug
+        #if DEBUG
+          Serial.println(F("Timer finished."));
+        #endif
         relay_outputs[0][i] = MOTOR_OFF;
         relay_outputs[1][i] = MOTOR_DOWN;
         updateRelays();
