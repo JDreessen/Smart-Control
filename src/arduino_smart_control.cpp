@@ -1,4 +1,4 @@
-// Smart Control v0.3
+// Smart Control v0.5
 // WARNING: SWICTHES AND SERIAL INTEROPERABILITY IS WIP
  
 #define DEBUG false
