@@ -14,14 +14,14 @@
 #define   MOTOR_ON          LOW
 #define   MOTOR_UP          LOW
 #define   MOTOR_DOWN        HIGH
-#define   MAX_DATA_LEN      11     // Max length of Serial transmission data (3 + motor_amount)
+#define   MAX_DATA_LEN      12     // Max length of Serial transmission data (3 + motor_amount)
 #define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
 
 const uint8_t input_pins[] = {INPUT_PINS};                  // Array of input pin numbers
 const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output pin numbers
 const uint8_t relay_amount = sizeof(input_pins);            // Number of relays in use
 const uint8_t motor_amount = relay_amount / 2;              // makes code more readable
-const int16_t motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
+const long motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
 uint8_t relay_outputs[2][motor_amount];                     // For updateRelays() function
 unsigned long EEPROM_timer_start[motor_amount];             // For EEPROM calculation
 unsigned long adj_switch_duration;
@@ -32,7 +32,7 @@ unsigned int max_command_duration;                          // For resetting exe
 bool executingCommand = false;                              // For managing when to accept serial vs switches
 uint16_t activeSwitches = 0;                                // For managing when to accept serial vs switches
 bool switch_states[relay_amount];
-
+uint8_t motorControlState[motor_amount];                    // Future: used to selectively control motor
 // the buffer for the received chars
 // 1 extra char for the terminating character "\0"
 char g_buffer[MAX_DATA_LEN + 1];
@@ -65,7 +65,6 @@ void setup() {
     relay_outputs[1][i] = MOTOR_DOWN;
     updateRelays();
   }
-  //delay(10000);
   Serial1.begin(9600);
 }
 
@@ -237,15 +236,15 @@ void addData(char nextChar) {
 void processData(void) {
     // If buffer begins with "set" and is of correct length
     if (g_buffer[0] == 's' && g_buffer[1] == 'e' && g_buffer[2] == 't') {
-      if (g_buffer[motor_amount + 2] != '\0' && g_buffer[motor_amount + 3] == '\0') {
+      if (strlen(g_buffer) == 3 + motor_amount) {
         processSerialCommand();
         send_buffer[0] = 127;
-        for (int i = 0; i < 7; i++) {
+        for (int i = 1; i < 8; i++) {
           send_buffer[i] = 0;
         }
       } else {
         send_buffer[0] = 128;
-        for (int i = 0; i < 7; i++) {
+        for (int i = 1; i < 8; i++) {
           send_buffer[i] = 0;
         }
       Serial1.write(send_buffer, sizeof(send_buffer));
@@ -266,14 +265,14 @@ void processData(void) {
         EEPROM.write(i, 0);
       }
       send_buffer[0] = 129;
-        for (int i = 0; i < 7; i++) {
+        for (int i = 1; i < 8; i++) {
           send_buffer[i] = 0;
         }
       Serial1.write(send_buffer, sizeof(send_buffer));
     }
     else {
       send_buffer[0] = 130;
-        for (int i = 0; i < 7; i++) {
+        for (int i = 1; i < 8; i++) {
           send_buffer[i] = 0;
         }
       Serial1.write(send_buffer, sizeof(send_buffer));
@@ -369,7 +368,7 @@ void processCommandTimers() {
   }
   // turn off motor if its respective timer ran out
   for (int i = 0; i < motor_amount; i++) {
-    //stupid fix
+    // (maybe not so) stupid fix
     if (command_duration[i] > 0) {
       if (millis() - message_age >= command_duration[i]) {
         #if DEBUG
