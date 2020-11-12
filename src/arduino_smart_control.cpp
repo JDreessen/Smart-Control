@@ -25,7 +25,7 @@ const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output p
 const uint8_t relay_amount = sizeof(input_pins);            // Number of relays in use
 const uint8_t motor_amount = relay_amount / 2;              // makes code more readable
 const long motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
-uint8_t relay_outputs[2][motor_amount];                     // For updateRelays() function
+bool relay_outputs[2][motor_amount];                     // For updateRelays() function // Warum uint8_t??
 unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
 unsigned int command_duration[motor_amount];                // For calculating relay switch duration according to serial
 
@@ -66,8 +66,8 @@ void setup() {
   for (int i = 0; i < motor_amount; i++) {
     relay_outputs[0][i] = MOTOR_OFF;
     relay_outputs[1][i] = MOTOR_DOWN;
-    updateRelays();
   }
+  updateRelays();
   Serial1.begin(9600);
 }
 
@@ -87,7 +87,7 @@ void loop() {
           switchReleased(i/2, i%2);
         }
       }
-      else if (switchTimer[i/2] > 0 && millis() - switchTimer[i/2] > MOTOR_DELAY + (unsigned)abs(motor_durations[i%2][i/2])) {
+      else if (switchTimer[i/2] > 0 && millis() - switchTimer[i/2] - MOTOR_DELAY > (unsigned)abs(motor_durations[i%2][i/2])) { // if max time exceeded
         switchReleased(i/2, i%2); //switch isn't released, but timer finished so do the same
       }
     }
@@ -172,19 +172,19 @@ void addData(char nextChar) {
 void processData(void) {
   // If buffer begins with "set" and is of correct length
   if (g_buffer[0] == 's' && g_buffer[1] == 'e' && g_buffer[2] == 't') {
-    if (strlen(g_buffer) == 3 + motor_amount) {
-      serialCommand_set();
-      send_buffer[0] = 127;
-      for (int i = 1; i < 8; i++) {
-        send_buffer[i] = 0;
-      }
+    //if (strlen(g_buffer) == 3 + motor_amount) {
+    serialCommand_set();
+    send_buffer[0] = 127;
+    for (int i = 1; i < 8; i++) {
+      send_buffer[i] = 0;
     }
-    else {
-      send_buffer[0] = 128;
-      for (int i = 1; i < 8; i++) {
-        send_buffer[i] = 0;
-      }
-    }
+    //}
+    // else {
+    //   send_buffer[0] = 128;
+    //   for (int i = 1; i < 8; i++) {
+    //     send_buffer[i] = 0;
+    //   }
+    // }
     Serial1.write(send_buffer, sizeof(send_buffer));
     // Send current motor positions via Serial
   }
@@ -224,8 +224,8 @@ bool debouncedRead(uint8_t pin) {
     if (digitalRead(pin) == LOW) {counter++;}
     delayMicroseconds(200);
   }
-  if (counter > 5) {return true;}
-  return false;
+  if (counter > 5) {return LOW;}
+  return HIGH;
 }
 
 bool PinStateChanged(uint8_t pin, bool *lastSwitchState, bool *risingEdge) {
@@ -266,7 +266,10 @@ void switchReleased(int motorID, int direction) {
       Serial.print("relative_movement: ");
       Serial.println(rel_movement);
     #endif
-    EEPROM.write(motorID, EEPROM.read(motorID) + rel_movement);
+    int newPos = (signed)EEPROM.read(motorID) + rel_movement;
+    if (newPos > 100) {newPos = 100;}
+    else if (newPos < 0) {newPos = 0;}
+    EEPROM.write(motorID, newPos);
   }
   switchTimer[motorID] = 0; //reset switch timer once it's no longer in use
 }
@@ -278,9 +281,11 @@ void serialCommand_set(void) {
     if (0 <= motorID && motorID < motor_amount) { // g_buffer[i+3]=Motor-Index
       bitSet(runningTimers, motorID);
       ser_rel_movement[motorID] = (EEPROM.read(i/2) - translateValue(g_buffer[i+4])); // g_buffer[i+4]=soll-Position // int8_t geht auch // !!Vorzeichen invertiert!!
-      relay_outputs[0][motorID] = MOTOR_ON;
-      relay_outputs[1][motorID] = DIR2BOOL(SIGN(ser_rel_movement[motorID]));
-      command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * motor_durations[1][motorID]) + MOTOR_DELAY;
+      if (ser_rel_movement > 0) { // Don't do anythin if motor is already on position
+        relay_outputs[0][motorID] = MOTOR_ON;
+        relay_outputs[1][motorID] = DIR2BOOL(-SIGN(ser_rel_movement[motorID]));
+        command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * motor_durations[1][motorID]) + MOTOR_DELAY;
+      }
     }
   }
 }
