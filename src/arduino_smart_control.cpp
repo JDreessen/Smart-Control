@@ -1,4 +1,4 @@
-// Smart Control v0.9
+// Smart Control v0.99
 // WARNING: SWICTHES AND SERIAL INTEROPERABILITY IS WIP
  
 #define DEBUG false
@@ -19,13 +19,14 @@
 #define   CHAR2INT(c)       ((int)c - 48)
 #define   SIGN(x)           ((x>0)? (1):(-1))
 #define   DIR2BOOL(x)       ((x+1)/2)
+#define   BOOL2DIR(x)       ((x*2)-1)
 
 const uint8_t input_pins[] = {INPUT_PINS};                  // Array of input pin numbers
 const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output pin numbers
 const uint8_t relay_amount = sizeof(input_pins);            // Number of relays in use
 const uint8_t motor_amount = relay_amount / 2;              // makes code more readable
 const long motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
-bool relay_outputs[2][motor_amount];                     // For updateRelays() function // Warum uint8_t??
+bool relay_outputs[2][motor_amount];                        // For updateRelays() function
 unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
 unsigned int command_duration[motor_amount];                // For calculating relay switch duration according to serial
 
@@ -56,27 +57,29 @@ void setup() {
   #if DEBUG
     Serial.begin(9600);
   #endif
+  Serial1.begin(9600);
 
   for (int i = 0; i < relay_amount; i++) {
     pinMode(input_pins[i], INPUT_PULLUP);
     pinMode(output_pins[i], OUTPUT);
+    digitalWrite(output_pins[i], HIGH);
     lastSwitchState[i] = debouncedRead(input_pins[i]);
     risingEdge[i] = lastSwitchState[i];
   }
+  updateRelays();
   for (int i = 0; i < motor_amount; i++) {
     relay_outputs[0][i] = MOTOR_OFF;
     relay_outputs[1][i] = MOTOR_DOWN;
   }
-  updateRelays();
-  Serial1.begin(9600);
 }
 
 void loop() {
-  processSerialData();
-
+  if (runningTimers == 0) {
+    processSerialData();
+  }
   for (int i = 0; i < relay_amount; i++) {
-    if (bitRead(runningTimers, i)) {
-      processCmdTimer(i);
+    if (bitRead(runningTimers, i/2)) { //Falsch, sollte i/2 sein
+      processCmdTimer(i/2); // war i, keine Ahnung warum das geklappt hat
     }
     else {
       if (PinStateChanged(input_pins[i], &lastSwitchState[i], &risingEdge[i])) {
@@ -87,7 +90,8 @@ void loop() {
           switchReleased(i/2, i%2);
         }
       }
-      else if (switchTimer[i/2] > 0 && millis() - switchTimer[i/2] - MOTOR_DELAY > (unsigned)abs(motor_durations[i%2][i/2])) { // if max time exceeded
+      else if (lastSwitchState[i] == LOW && switchTimer[i/2] > 0 && millis() - switchTimer[i/2] > MOTOR_DELAY + (unsigned)abs(motor_durations[i%2][i/2])) { // if max time exceeded
+        //i immer gerade, i%2 immer 0
         switchReleased(i/2, i%2); //switch isn't released, but timer finished so do the same
       }
     }
@@ -173,20 +177,13 @@ void processData(void) {
   // If buffer begins with "set" and is of correct length
   if (g_buffer[0] == 's' && g_buffer[1] == 'e' && g_buffer[2] == 't') {
     //if (strlen(g_buffer) == 3 + motor_amount) {
-    serialCommand_set();
     send_buffer[0] = 127;
     for (int i = 1; i < 8; i++) {
       send_buffer[i] = 0;
     }
-    //}
-    // else {
-    //   send_buffer[0] = 128;
-    //   for (int i = 1; i < 8; i++) {
-    //     send_buffer[i] = 0;
-    //   }
-    // }
     Serial1.write(send_buffer, sizeof(send_buffer));
-    // Send current motor positions via Serial
+    
+    serialCommand_set();
   }
   else if (strcmp(g_buffer, "get") == 0 ) {                               // If buffer equals "get"
     for (int i = 0; i < motor_amount; i++) {
@@ -258,8 +255,9 @@ void switchReleased(int motorID, int direction) {
   relay_outputs[1][motorID] = MOTOR_DOWN;
 
   if (millis() - switchTimer[motorID] > MOTOR_DELAY) {
-    int rel_movement = (float)(millis() - switchTimer[motorID] - MOTOR_DELAY) / motor_durations[direction][motorID] * 100;
+    int rel_movement = BOOL2DIR(direction) * ((float)(millis() - switchTimer[motorID]) / (MOTOR_DELAY + abs(motor_durations[direction][motorID])) * 100);
     // Make sure rel_movement is has legal value
+    // Is this redundant?
     if (rel_movement > 100) {rel_movement = 100;}
     else if (rel_movement < -100) {rel_movement = -100;}
     #if DEBUG
@@ -276,25 +274,25 @@ void switchReleased(int motorID, int direction) {
 
 void serialCommand_set(void) {
   message_age = millis();
-  for (uint8_t i=0; i < (strlen(g_buffer)-3) / 2; i +=2) {
+  for (uint8_t i=0; i < (strlen(g_buffer)-3); i +=2) {
     uint8_t motorID = CHAR2INT(g_buffer[i+3]);
     if (0 <= motorID && motorID < motor_amount) { // g_buffer[i+3]=Motor-Index
-      bitSet(runningTimers, motorID);
-      ser_rel_movement[motorID] = (EEPROM.read(i/2) - translateValue(g_buffer[i+4])); // g_buffer[i+4]=soll-Position // int8_t geht auch // !!Vorzeichen invertiert!!
-      if (ser_rel_movement > 0) { // Don't do anythin if motor is already on position
+      ser_rel_movement[motorID] = translateValue(g_buffer[i+4]) - EEPROM.read(motorID); // g_buffer[i+4]=soll-Position 
+      if (ser_rel_movement != 0) { // Don't do anything if motor is already on position
+        bitSet(runningTimers, motorID);
         relay_outputs[0][motorID] = MOTOR_ON;
-        relay_outputs[1][motorID] = DIR2BOOL(-SIGN(ser_rel_movement[motorID]));
-        command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * motor_durations[1][motorID]) + MOTOR_DELAY;
+        relay_outputs[1][motorID] = DIR2BOOL(SIGN(ser_rel_movement[motorID]));
+        command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * abs(motor_durations[DIR2BOOL(SIGN(ser_rel_movement[motorID]))][motorID])) + MOTOR_DELAY;
       }
     }
   }
 }
 
 void processCmdTimer(uint8_t motorID) {
-  if (millis() - message_age >= command_duration[motorID]) {
+  if (millis() - message_age >= command_duration[motorID]) { //MOTOR_DELAY is accounted for
     relay_outputs[0][motorID] = MOTOR_OFF;
     relay_outputs[1][motorID] = MOTOR_DOWN;
-    EEPROM.write(motorID, EEPROM.read(motorID) - ser_rel_movement[motorID]);
+    EEPROM.write(motorID, EEPROM.read(motorID) + ser_rel_movement[motorID]); // Missing checks?!
     bitClear(runningTimers, motorID);
   }
 }
