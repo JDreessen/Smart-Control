@@ -4,54 +4,68 @@
 #define DEBUG false
 
 #include <Arduino.h>
-//#include <string.h>     // For strcmp()
-#include <EEPROM.h>     // For saving motor positions
-#include "config.h"     // config file for pins, motor durations..
+//#include <string.h>       // For strcmp()
+#include <EEPROM.h>         // For saving motor positions
+#include "CommandBuffer.hh"
+//#include "config.h"       // config file for pins, motor durations..
+#include "Shutter.hh"       //TODO: replace config.h with Shutter.hh when ready
+#include "ShutterSwitch.hh" //TODO: Everything to do with switches should be handled by this ShutterSwitch class
 
-// Maybe required if position calculation is too imprecise
-#define   MOTOR_DELAY       1500   // delay until motor reacts to input
-#define   MOTOR_OFF         HIGH
-#define   MOTOR_ON          LOW
-#define   MOTOR_UP          LOW
-#define   MOTOR_DOWN        HIGH
 #define   MAX_DATA_LEN      3+16   // Max length of Serial transmission data (3 + motor_amount)
 #define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
 #define   CHAR2INT(c)       ((int)c - 48)
-#define   SIGN(x)           ((x>0)? (1):(-1))
-#define   DIR2BOOL(x)       ((x+1)/2)
-#define   BOOL2DIR(x)       ((x*2)-1)
+#define   SIGN(x)           ((x>0) ? (1) : (-1))
+#define   DIR2BOOL(x)       ((x + 1) / 2)
+#define   BOOL2DIR(x)       ((x * 2) - 1)
 
-const uint8_t input_pins[] = {INPUT_PINS};                  // Array of input pin numbers
-const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output pin numbers
-const uint8_t relay_amount = sizeof(input_pins);            // Number of relays in use
-const uint8_t motor_amount = relay_amount / 2;              // makes code more readable
-const long motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
-bool relay_outputs[2][motor_amount];                        // For updateRelays() function
+Shutter shutters[8] = 
+  {
+  // InputPin  OutputPin     Duration
+    {{25, 23}, {-28100, 26100}}, // Küche
+    {{28, 26}, {-28100, 26100}}, // Esszimmer
+    {{36, 34}, {-29500, 26100}}, // Wohnzimmer groß
+    {{32, 30}, {-19200, 17600}}, // Wohnzimmer klein
+    {{29, 27}, {-19200, 17800}}, // Lea links
+    {{24, 22}, {-19200, 17800}}, // Lea rechts
+    {{37, 35}, {-19200, 17600}}, // Bad
+    {{33, 31}, {-28100, 26100}}  // HaWi
+  };
+ShutterSwitch switches[8] = 
+  {
+    {{51, 53}},
+    {{43, 45}},
+    {{42, 40}},
+    {{44, 46}},
+    {{48, 38}},
+    {{50, 52}},
+    {{47, 49}},
+    {{39, 41}}
+  };
+//const uint8_t input_pins[] = {INPUT_PINS};                  // Array of input pin numbers
+//const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output pin numbers
+const uint8_t motor_amount = sizeof(shutters) / sizeof(shutters[0]);  // Number of relays in use
+const uint8_t relay_amount = motor_amount * 2;              // makes code more readable
+//const long motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
+//bool relay_outputs[2][motor_amount];                        // For updateRelays() function
 unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
 unsigned int command_duration[motor_amount];                // For calculating relay switch duration according to serial
 
-bool risingEdge[relay_amount];
-bool lastSwitchState[relay_amount];
-unsigned long switchTimer[8];
+// bool risingEdge[relay_amount];
+// bool lastSwitchState[relay_amount];
+//unsigned long switchTimer[8];
 byte runningTimers = 0;
 int8_t ser_rel_movement[8];
-// the buffer for the received chars
-// 1 extra char for the terminating character "\0"
-char g_buffer[MAX_DATA_LEN + 1];
 
 uint8_t send_buffer[8];
 
-void processSerialData(void);
+CommandBuffer<HardwareSerial, MAX_DATA_LEN, TERMINATOR_CHAR> buffer(Serial1);
+
 void processCmdTimer(uint8_t);
-void switchPressed(int, int);
-void switchReleased(int, int);
-bool debouncedRead(uint8_t);
-void processData(void);
-bool PinStateChanged(uint8_t, bool*, bool*);
+void switchAction(int, int);
+void processCommand(void);
 void serialCommand_set(void);
 int8_t translateValue(char);
 void updateRelays(void);
-void addData(char);
 
 void setup() {
   #if DEBUG
@@ -59,40 +73,46 @@ void setup() {
   #endif
   Serial1.begin(9600);
 
-  for (int i = 0; i < relay_amount; i++) {
-    pinMode(input_pins[i], INPUT_PULLUP);
-    pinMode(output_pins[i], OUTPUT);
-    digitalWrite(output_pins[i], HIGH);
-    lastSwitchState[i] = debouncedRead(input_pins[i]);
-    risingEdge[i] = lastSwitchState[i];
+  for (Shutter s : shutters) {
+    s.setup();
   }
-  updateRelays();
-  for (int i = 0; i < motor_amount; i++) {
-    relay_outputs[0][i] = MOTOR_OFF;
-    relay_outputs[1][i] = MOTOR_DOWN;
-  }
+  // for (int i = 0; i < relay_amount; i++) {
+  //   lastSwitchState[i] = debouncedRead(input_pins[i]);
+  //   risingEdge[i] = lastSwitchState[i];
+  // }
+  // updateRelays();
+  // for (int i = 0; i < motor_amount; i++) {
+  //   relay_outputs[0][i] = MOTOR_OFF;
+  //   relay_outputs[1][i] = MOTOR_DOWN;
+  // }
 }
 
 void loop() {
   if (runningTimers == 0) {
-    processSerialData();
-  }
-  for (int i = 0; i < relay_amount; i++) {
-    if (bitRead(runningTimers, i/2)) { //Falsch, sollte i/2 sein
-      processCmdTimer(i/2); // war i, keine Ahnung warum das geklappt hat
+    if (buffer.available()) {
+      processCommand();
+    } else {
+      buffer.update();
     }
-    else {
-      if (PinStateChanged(input_pins[i], &lastSwitchState[i], &risingEdge[i])) {
-        if (!risingEdge[i]) {
-          switchPressed(i/2, i%2);
-        }
-        else if (switchTimer[i/2] > 0) {
-          switchReleased(i/2, i%2);
-        }
+    /* alternative: process multiple commands back-to-back
+    if (!buffer.available()){ buffer.update; }
+    while (buffer.available()) {
+      processCommand();
+      buffer.update();
+    }
+    */
+  }
+  for (int i = 0; i < motor_amount; i++) {
+    if (bitRead(runningTimers, i)) {
+      processCmdTimer(i);
+    }
+    else { //TODO: Always check whether PinStateChanged. if motor is moving: stop and write position
+      if (switches[i].hasChanged()) {
+        switchAction(i, switches[i].getState());
       }
-      else if (lastSwitchState[i] == LOW && switchTimer[i/2] > 0 && millis() - switchTimer[i/2] > MOTOR_DELAY + (unsigned)abs(motor_durations[i%2][i/2])) { // if max time exceeded
+      else if (switches[i].getState() != 0 && switches[i].timer > 0 && millis() - switches[i].timer > MOTOR_DELAY + (unsigned)abs(shutters[i].max_durations[i%2])) { // if max time exceeded
         //i immer gerade, i%2 immer 0
-        switchReleased(i/2, i%2); //switch isn't released, but timer finished so do the same
+        switchAction(i, switches[i].getState()); //switch isn't released, but timer finished so do the same
       }
     }
   }
@@ -102,81 +122,17 @@ void loop() {
 
 // Function to set motor relays according to the relay_outputs array
 void updateRelays(void) {
-  #if DEBUG
-    //Serial.print("Relay amount: ");
-    //Serial.println(relay_amount);
-  #endif
-  for (int i = 0; i < motor_amount; i++) {
-    #if DEBUG
-      // Serial.print("writing ");
-      // Serial.print(relay_outputs[1][i]);
-      // Serial.print(" to ");
-      // Serial.println(output_pins[i + 1]);
-    #endif
-    digitalWrite(output_pins[i * 2 + 1], relay_outputs[1][i]); // set direction relay state
-    #if DEBUG
-      // Serial.print("writing ");
-      // Serial.print(relay_outputs[0][i]);
-      // Serial.print(" to ");
-      // Serial.println(output_pins[i]);
-    #endif
-    digitalWrite(output_pins[i * 2], relay_outputs[0][i]);     // set power relay state
-  }
-}
-
-// Function to process incoming Serial data
-void processSerialData(void) {
-  int data;
-  while ( Serial1.available() > 0 ) {
-    data = Serial1.read();addData((char)data);  
-    if (data == TERMINATOR_CHAR) {
-      processData();
-    }
-  }
-}
-
-// Put received character into the buffer.
-// When a complete command is received return true, otherwise return false.
-// The command is terminated by Enter character ("\r")
-void addData(char nextChar) {  
-  // This is position in the buffer where we put next char.
-  // Static var will remember its value across function calls.
-  static uint8_t currentIndex = 0;
-
-  // Ignore some characters - new line, space and tabs
-  if ((nextChar == '\n') || (nextChar == ' ') || (nextChar == '\t')) {
-    return;
-  }
-  
-  // If we receive Enter character...
-  if (nextChar == TERMINATOR_CHAR) {
-    // ...terminate the string by NULL character "\0" and return true
-    g_buffer[currentIndex] = '\0';
-    currentIndex = 0;
-    return;
-  }
-
-  // For normal character just store it in the buffer and increment Index
-  g_buffer[currentIndex] = nextChar;
-  currentIndex++;
-
-  // Check for too many chars
-  if (currentIndex >= MAX_DATA_LEN) {
-    // If data exceeds max length reset our position and return true
-    // so that the data received so far can be processed - the caller should
-    // see if it is valid command or not
-    g_buffer[MAX_DATA_LEN] = '\0';
-    currentIndex = 0;
-    return;
+  for (Shutter s : shutters) {
+    s.write();
   }
 }
 
 // process the data - command
 // strcmp compares two strings and returns 0 if they are the same.
-void processData(void) {
+void processCommand(void) {
   // If buffer begins with "set" and is of correct length
-  if (g_buffer[0] == 's' && g_buffer[1] == 'e' && g_buffer[2] == 't') {
-    //if (strlen(g_buffer) == 3 + motor_amount) {
+  if (buffer.content[0] == 's' && buffer.content[1] == 'e' && buffer.content[2] == 't') {
+    //if (strlen(buffer.content) == 3 + motor_amount) {
     send_buffer[0] = 127;
     for (int i = 1; i < 8; i++) {
       send_buffer[i] = 0;
@@ -185,7 +141,7 @@ void processData(void) {
     
     serialCommand_set();
   }
-  else if (strcmp(g_buffer, "get") == 0 ) {                               // If buffer equals "get"
+  else if (strcmp(buffer.content, "get") == 0 ) {                               // If buffer equals "get"
     for (int i = 0; i < motor_amount; i++) {
       send_buffer[i] = EEPROM.read(i);
     }
@@ -195,7 +151,7 @@ void processData(void) {
     Serial1.write(send_buffer, sizeof(send_buffer));
     
   }
-  else if (strcmp(g_buffer, "reset") == 0 ) {                              // If buffer equals "reset"
+  else if (strcmp(buffer.content, "reset") == 0 ) {                              // If buffer equals "reset"
     for (int i=0; i < motor_amount; i++) {
       EEPROM.write(i, 0);
     }
@@ -215,74 +171,42 @@ void processData(void) {
   }
 }
 
-bool debouncedRead(uint8_t pin) {
-  uint8_t counter = 0;
-  for (int i = 0; i < 10; i++) {
-    if (digitalRead(pin) == LOW) {counter++;}
-    delayMicroseconds(200);
-  }
-  if (counter > 5) {return LOW;}
-  return HIGH;
-}
+void switchAction(int switchID, int switchState) {
+  if (switchState == 0) {
+    shutters[switchID].set(MOTOR_ON, switchState);
+    switches[switchID].timer = millis();
+  } else {
+    shutters[switchID].set(MOTOR_OFF, MOTOR_DOWN);
 
-bool PinStateChanged(uint8_t pin, bool *lastSwitchState, bool *risingEdge) {
- //Get pin state
- bool buttonState = debouncedRead(pin);
- 
- //Here starts the code for detecting an edge
- if (buttonState != *lastSwitchState) {
-    if (buttonState == LOW) {
-        *risingEdge = 0;
+    if (millis() - switches[switchID].timer > MOTOR_DELAY) {
+      int rel_movement = switchState * ((float)(millis() - switches[switchID].timer) / (MOTOR_DELAY + abs(shutters[switchID].max_durations[DIR2BOOL(switchState)])) * 100);
+      // Make sure rel_movement is has legal value
+      // Is this redundant?
+      if (rel_movement > 100) {rel_movement = 100;}
+      else if (rel_movement < -100) {rel_movement = -100;}
+      #if DEBUG
+        Serial.print("relative_movement: ");
+        Serial.println(rel_movement);
+      #endif
+      int newPos = (signed)EEPROM.read(switchID) + rel_movement;
+      if (newPos > 100) {newPos = 100;}
+      else if (newPos < 0) {newPos = 0;}
+      EEPROM.write(switchID, newPos);
     }
-    else {
-      *risingEdge = 1;
-    }
-    *lastSwitchState = buttonState;
-    return true;
- }
- 
- return false;
-}
-
-void switchPressed(int motorID, int direction) {
-  relay_outputs[0][motorID] = MOTOR_ON;
-  relay_outputs[1][motorID] = direction; //index % 2 returns 0 or 1, depending on switch direction
-  switchTimer[motorID] = millis();
-}
-
-void switchReleased(int motorID, int direction) {
-  relay_outputs[0][motorID] = MOTOR_OFF;
-  relay_outputs[1][motorID] = MOTOR_DOWN;
-
-  if (millis() - switchTimer[motorID] > MOTOR_DELAY) {
-    int rel_movement = BOOL2DIR(direction) * ((float)(millis() - switchTimer[motorID]) / (MOTOR_DELAY + abs(motor_durations[direction][motorID])) * 100);
-    // Make sure rel_movement is has legal value
-    // Is this redundant?
-    if (rel_movement > 100) {rel_movement = 100;}
-    else if (rel_movement < -100) {rel_movement = -100;}
-    #if DEBUG
-      Serial.print("relative_movement: ");
-      Serial.println(rel_movement);
-    #endif
-    int newPos = (signed)EEPROM.read(motorID) + rel_movement;
-    if (newPos > 100) {newPos = 100;}
-    else if (newPos < 0) {newPos = 0;}
-    EEPROM.write(motorID, newPos);
   }
-  switchTimer[motorID] = 0; //reset switch timer once it's no longer in use
+  switches[switchID].timer = 0; //reset switch timer once it's no longer in use
 }
 
 void serialCommand_set(void) {
   message_age = millis();
-  for (uint8_t i=0; i < (strlen(g_buffer)-3); i +=2) {
-    uint8_t motorID = CHAR2INT(g_buffer[i+3]);
-    if (0 <= motorID && motorID < motor_amount) { // g_buffer[i+3]=Motor-Index
-      ser_rel_movement[motorID] = translateValue(g_buffer[i+4]) - EEPROM.read(motorID); // g_buffer[i+4]=soll-Position 
+  for (uint8_t i=0; i < (strlen(buffer.content)-3); i +=2) {
+    uint8_t motorID = CHAR2INT(buffer.content[i+3]);
+    if (0 <= motorID && motorID < motor_amount) { // buffer.content[i+3]=Motor-Index
+      ser_rel_movement[motorID] = translateValue(buffer.content[i+4]) - EEPROM.read(motorID); // buffer.content[i+4]=soll-Position 
       if (ser_rel_movement != 0) { // Don't do anything if motor is already on position
         bitSet(runningTimers, motorID);
-        relay_outputs[0][motorID] = MOTOR_ON;
-        relay_outputs[1][motorID] = DIR2BOOL(SIGN(ser_rel_movement[motorID]));
-        command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * abs(motor_durations[DIR2BOOL(SIGN(ser_rel_movement[motorID]))][motorID])) + MOTOR_DELAY;
+        shutters[motorID].set(MOTOR_ON, DIR2BOOL(SIGN(ser_rel_movement[motorID])));
+        command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * abs(shutters[motorID].max_durations[DIR2BOOL(SIGN(ser_rel_movement[motorID]))])) + MOTOR_DELAY;
       }
     }
   }
@@ -290,8 +214,7 @@ void serialCommand_set(void) {
 
 void processCmdTimer(uint8_t motorID) {
   if (millis() - message_age >= command_duration[motorID]) { //MOTOR_DELAY is accounted for
-    relay_outputs[0][motorID] = MOTOR_OFF;
-    relay_outputs[1][motorID] = MOTOR_DOWN;
+    shutters[motorID].set(MOTOR_OFF, MOTOR_DOWN);
     EEPROM.write(motorID, EEPROM.read(motorID) + ser_rel_movement[motorID]); // Missing checks?!
     bitClear(runningTimers, motorID);
   }
