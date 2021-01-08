@@ -1,4 +1,8 @@
+#ifndef SHUTTER_HH
+#define SUHTTER_HH
+
 #include <Arduino.h>
+#include "tools.h"
 
 #define   MOTOR_DELAY       1500   // delay until motor reacts to input
 #define   MOTOR_OFF         HIGH
@@ -10,44 +14,61 @@ using pin=const uint8_t;
 
 class Shutter {
   private:
+  uint8_t _id;
     pin _pins[2];
     uint8_t _position;
     bool _state[2];
+    unsigned long _move_timestamp;
   public:
-  const long max_durations[2];
+    unsigned long move_duration;
+    const long max_durations[2];
     bool running;
 
-    Shutter(pin (&pinsIN)[2], const long (&motor_durationsIN)[2]) : 
+    Shutter(uint8_t id, pin (&pinsIN)[2], const long (&motor_durationsIN)[2]) : 
+      _id(id),
       _pins{pinsIN[0], pinsIN[1]},
       _position(0),
       _state{MOTOR_OFF, MOTOR_DOWN},
+      _move_timestamp(0),
+      move_duration(0),
       max_durations{motor_durationsIN[0], motor_durationsIN[1]},
       running(true)
       {}
     // set GIOP mode and initial state
     void setup() {
-        for (pin p : _pins) {
-            pinMode(p, OUTPUT);
-            write();
-        }
-        
+      for (pin p : _pins) {
+        pinMode(p, OUTPUT);
+        write();
+      }
+      this->_position = EEPROM.read(_id);
     }
     // change power/direction of motor
     void set(bool power, bool direction) {
-        _state[0] = power;
-        _state[1] = direction;
+      _state[0] = power;
+      _state[1] = direction;
     }
     //TODO: begin movement and set timer duration
-    void move(uint8_t pos) {
-
+    void move(int8_t newPos) {
+      if (newPos - this->_position != 0) { // Don't do anything if motor is already on position
+        running = true;
+        set(MOTOR_ON, DIR2BOOL(SIGN(newPos - this->_position)));
+        move_duration = (abs(newPos - this->_position) / 100.0 * abs(this->max_durations[_state[1]])) + MOTOR_DELAY;
+        _move_timestamp = millis();
+      }
     }
     //TODO: stop movement (before executing new command)
     void stop() {
-
+      this->set(MOTOR_OFF, MOTOR_DOWN);
+      //TODO: add unfinished movement delta to _position
+      this->_position += (millis() - _move_timestamp) / (max_durations[_state[1]]); //TODO: Maybe check if value is even legal
+      EEPROM.write(this->_id, this->_position);
+      this->running = false;
     }
     //TODO: check for timer completion and stop movement
     void update() {
-
+      if (millis() - _move_timestamp >= this->move_duration) { //MOTOR_DELAY is accounted for
+        this->stop();
+      }
     }
     // write changes to GPIO
     void write() {
@@ -55,3 +76,5 @@ class Shutter {
         digitalWrite(_pins[1], _state[1]);
     }
 };
+
+#endif

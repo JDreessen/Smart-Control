@@ -10,25 +10,22 @@
 //#include "config.h"       // config file for pins, motor durations..
 #include "Shutter.hh"       //TODO: replace config.h with Shutter.hh when ready
 #include "ShutterSwitch.hh" //TODO: Everything to do with switches should be handled by this ShutterSwitch class
+#include "tools.h"
 
 #define   MAX_DATA_LEN      3+16   // Max length of Serial transmission data (3 + motor_amount)
 #define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
-#define   CHAR2INT(c)       ((int)c - 48)
-#define   SIGN(x)           ((x>0) ? (1) : (-1))
-#define   DIR2BOOL(x)       ((x + 1) / 2)
-#define   BOOL2DIR(x)       ((x * 2) - 1)
 
 Shutter shutters[8] = 
   {
   // InputPin  OutputPin     Duration
-    {{25, 23}, {-28100, 26100}}, // Küche
-    {{28, 26}, {-28100, 26100}}, // Esszimmer
-    {{36, 34}, {-29500, 26100}}, // Wohnzimmer groß
-    {{32, 30}, {-19200, 17600}}, // Wohnzimmer klein
-    {{29, 27}, {-19200, 17800}}, // Lea links
-    {{24, 22}, {-19200, 17800}}, // Lea rechts
-    {{37, 35}, {-19200, 17600}}, // Bad
-    {{33, 31}, {-28100, 26100}}  // HaWi
+    {0, {25, 23}, {-28100, 26100}}, // Küche
+    {1, {28, 26}, {-28100, 26100}}, // Esszimmer
+    {2, {36, 34}, {-29500, 26100}}, // Wohnzimmer groß
+    {3, {32, 30}, {-19200, 17600}}, // Wohnzimmer klein
+    {4, {29, 27}, {-19200, 17800}}, // Lea links
+    {5, {24, 22}, {-19200, 17800}}, // Lea rechts
+    {6, {37, 35}, {-19200, 17600}}, // Bad
+    {7, {33, 31}, {-28100, 26100}}  // HaWi
   };
 ShutterSwitch switches[8] = 
   {
@@ -41,30 +38,20 @@ ShutterSwitch switches[8] =
     {{47, 49}},
     {{39, 41}}
   };
-//const uint8_t input_pins[] = {INPUT_PINS};                  // Array of input pin numbers
-//const uint8_t output_pins[] = {OUTPUT_PINS};                // Array of output pin numbers
 const uint8_t motor_amount = sizeof(shutters) / sizeof(shutters[0]);  // Number of relays in use
 const uint8_t relay_amount = motor_amount * 2;              // makes code more readable
-//const long motor_durations[2][motor_amount] = {{MOTOR_UP_DUR}, {MOTOR_DOWN_DUR}};
-//bool relay_outputs[2][motor_amount];                        // For updateRelays() function
-unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
-unsigned int command_duration[motor_amount];                // For calculating relay switch duration according to serial
+//unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
 
-// bool risingEdge[relay_amount];
-// bool lastSwitchState[relay_amount];
-//unsigned long switchTimer[8];
-byte runningTimers = 0;
-int8_t ser_rel_movement[8];
+//int8_t ser_rel_movement[8];
 
 uint8_t send_buffer[8];
 
 CommandBuffer<HardwareSerial, MAX_DATA_LEN, TERMINATOR_CHAR> buffer(Serial1);
 
-void processCmdTimer(uint8_t);
+//void processCmdTimer(uint8_t);
 void switchAction(int, int);
 void processCommand(void);
 void serialCommand_set(void);
-int8_t translateValue(char);
 void updateRelays(void);
 
 void setup() {
@@ -76,35 +63,28 @@ void setup() {
   for (Shutter s : shutters) {
     s.setup();
   }
-  // for (int i = 0; i < relay_amount; i++) {
-  //   lastSwitchState[i] = debouncedRead(input_pins[i]);
-  //   risingEdge[i] = lastSwitchState[i];
-  // }
-  // updateRelays();
-  // for (int i = 0; i < motor_amount; i++) {
-  //   relay_outputs[0][i] = MOTOR_OFF;
-  //   relay_outputs[1][i] = MOTOR_DOWN;
-  // }
 }
 
 void loop() {
-  if (runningTimers == 0) {
+  /* replace with MQTT Messaging system
+  if (runningTimers == 0) { 
     if (buffer.available()) {
       processCommand();
     } else {
       buffer.update();
     }
-    /* alternative: process multiple commands back-to-back
-    if (!buffer.available()){ buffer.update; }
-    while (buffer.available()) {
-      processCommand();
-      buffer.update();
-    }
-    */
+    // alternative: process multiple commands back-to-back
+    // if (!buffer.available()){ buffer.update; }
+    // while (buffer.available()) {
+    //   processCommand();
+    //   buffer.update();
+    // }
   }
+  */
   for (int i = 0; i < motor_amount; i++) {
-    if (bitRead(runningTimers, i)) {
-      processCmdTimer(i);
+    if (shutters[i].running) {
+      //processCmdTimer(i);
+      shutters[i].update();
     }
     else { //TODO: Always check whether PinStateChanged. if motor is moving: stop and write position
       if (switches[i].hasChanged()) {
@@ -198,29 +178,16 @@ void switchAction(int switchID, int switchState) {
 }
 
 void serialCommand_set(void) {
-  message_age = millis();
   for (uint8_t i=0; i < (strlen(buffer.content)-3); i +=2) {
     uint8_t motorID = CHAR2INT(buffer.content[i+3]);
     if (0 <= motorID && motorID < motor_amount) { // buffer.content[i+3]=Motor-Index
-      ser_rel_movement[motorID] = translateValue(buffer.content[i+4]) - EEPROM.read(motorID); // buffer.content[i+4]=soll-Position 
-      if (ser_rel_movement != 0) { // Don't do anything if motor is already on position
-        bitSet(runningTimers, motorID);
-        shutters[motorID].set(MOTOR_ON, DIR2BOOL(SIGN(ser_rel_movement[motorID])));
-        command_duration[motorID] = (abs(ser_rel_movement[motorID]) / 100.0 * abs(shutters[motorID].max_durations[DIR2BOOL(SIGN(ser_rel_movement[motorID]))])) + MOTOR_DELAY;
-      }
+      shutters[motorID].move(buffer.read(i+4));
     }
   }
 }
-
-void processCmdTimer(uint8_t motorID) {
-  if (millis() - message_age >= command_duration[motorID]) { //MOTOR_DELAY is accounted for
-    shutters[motorID].set(MOTOR_OFF, MOTOR_DOWN);
-    EEPROM.write(motorID, EEPROM.read(motorID) + ser_rel_movement[motorID]); // Missing checks?!
-    bitClear(runningTimers, motorID);
-  }
-}
-
-int8_t translateValue(char c) {
-  if (c == 'c') {return 100;}
-  return CHAR2INT(c) * 10;
-}
+//TODO: replace with shutter.update() (almost done)
+// void processCmdTimer(uint8_t motorID) {
+//   if (millis() - shutters >= shutters[motorID].move_duration) { //MOTOR_DELAY is accounted for
+//     shutters[motorID].stop();
+//   }
+// }

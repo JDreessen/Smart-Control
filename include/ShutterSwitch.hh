@@ -1,3 +1,6 @@
+#ifndef SHUTTERSWITCH_HH
+#define SHUTTERSWITCH_HH
+
 #include <Arduino.h>
 
 using pin=const uint8_t;
@@ -10,9 +13,9 @@ class ShutterSwitch {
     bool _risingEdge[2];
 
   public:
-    unsigned long timer;
+   unsigned long timer;
 
-    ShutterSwitch(pin (&pinsIN)[2]) :
+   ShutterSwitch(pin (&pinsIN)[2]) :
       _pins{pinsIN[0], pinsIN[1]},
       _state{0},
       _lastSwitchState{debouncedRead(0), debouncedRead(1)},
@@ -58,7 +61,14 @@ class ShutterSwitch {
 
     bool hasChanged() {return hasChanged(0) || hasChanged(1);}
 
-    int8_t getState() {return _state;}
+    int8_t getState() {return this->_state;}
     //TODO: maybe read GPIO and set internal vars here
-    void update() {}
+    void update() {
+      //BAD, could be put into hasChanged()
+      if (hasChanged(0)) { if (!_risingEdge[0]) {_state = 1;} }
+      else if (hasChanged(1)) { if (!_risingEdge[1]) {_state = -1;} }
+      else {_state = 0;}
+    }
 };
+
+#endif

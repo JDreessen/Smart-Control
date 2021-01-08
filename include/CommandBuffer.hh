@@ -55,6 +55,10 @@ class CommandBuffer {
                 return;
             }
         }
+        uint8_t read(uint8_t i) {
+            if (this->content[i] == 'c') {return 100;}
+            else {return this->content[i] * 10;}
+        }
 };
 
 #endif // HH_COMMANDBUFFER
