@@ -40,7 +40,7 @@ class Shutter {
         pinMode(p, OUTPUT);
         write();
       }
-      this->_position = EEPROM.read(_id);
+      _position = EEPROM.read(_id);
     }
     // change power/direction of motor
     void set(bool power, bool direction) {
@@ -49,25 +49,25 @@ class Shutter {
     }
     //TODO: begin movement and set timer duration
     void move(int8_t newPos) {
-      if (newPos - this->_position != 0) { // Don't do anything if motor is already on position
+      if (newPos - _position != 0) { // Don't do anything if motor is already on position
         running = true;
-        set(MOTOR_ON, DIR2BOOL(SIGN(newPos - this->_position)));
-        move_duration = (abs(newPos - this->_position) / 100.0 * abs(this->max_durations[_state[1]])) + MOTOR_DELAY;
+        set(MOTOR_ON, DIR2BOOL(SIGN(newPos - _position)));
+        move_duration = (abs(newPos - _position) / 100.0 * abs(max_durations[_state[1]])) + MOTOR_DELAY;
         _move_timestamp = millis();
       }
     }
     //TODO: stop movement (before executing new command)
     void stop() {
-      this->set(MOTOR_OFF, MOTOR_DOWN);
+      set(MOTOR_OFF, MOTOR_DOWN);
       //TODO: add unfinished movement delta to _position
-      this->_position += (millis() - _move_timestamp) / (max_durations[_state[1]]); //TODO: Maybe check if value is even legal
-      EEPROM.write(this->_id, this->_position);
-      this->running = false;
+      _position += (millis() - _move_timestamp) / (max_durations[_state[1]]); //TODO: Maybe check if value is even legal
+      EEPROM.write(_id, _position);
+      running = false;
     }
     //TODO: check for timer completion and stop movement
     void update() {
-      if (millis() - _move_timestamp >= this->move_duration) { //MOTOR_DELAY is accounted for
-        this->stop();
+      if (millis() - _move_timestamp >= move_duration) { //MOTOR_DELAY is accounted for
+        stop();
       }
     }
     // write changes to GPIO

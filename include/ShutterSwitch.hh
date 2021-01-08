@@ -28,12 +28,12 @@ class ShutterSwitch {
       timer(0)
       {}
     
-    int read(uint8_t i_pin) {return digitalRead(this->_pins[i_pin]);}
+    int read(uint8_t i_pin) {return digitalRead(_pins[i_pin]);}
 
     int debouncedRead(uint8_t i_pin) {
       uint8_t counter = 0;
       for (int i = 0; i < 10; i++) {
-        if (digitalRead(this->_pins[i_pin]) == LOW) {counter++;}
+        if (digitalRead(_pins[i_pin]) == LOW) {counter++;}
         delayMicroseconds(200);
       }
       if (counter > 5) {return LOW;}
@@ -42,17 +42,17 @@ class ShutterSwitch {
 
     bool hasChanged(uint8_t index) {
       //Get pin state
-      bool buttonState = debouncedRead(this->_pins[index]);
+      bool buttonState = debouncedRead(_pins[index]);
       
       //Here starts the code for detecting an edge
-      if (buttonState != this->_lastSwitchState[index]) {
+      if (buttonState != _lastSwitchState[index]) {
           if (buttonState == LOW) {
-              this->_risingEdge[index] = 0;
+              _risingEdge[index] = 0;
           }
           else {
-            this->_risingEdge[index] = 1;
+            _risingEdge[index] = 1;
           }
-          this->_lastSwitchState[index] = buttonState;
+          _lastSwitchState[index] = buttonState;
           return true;
       }
       
@@ -61,7 +61,7 @@ class ShutterSwitch {
 
     bool hasChanged() {return hasChanged(0) || hasChanged(1);}
 
-    int8_t getState() {return this->_state;}
+    int8_t getState() {return _state;}
     //TODO: maybe read GPIO and set internal vars here
     void update() {
       //BAD, could be put into hasChanged()
