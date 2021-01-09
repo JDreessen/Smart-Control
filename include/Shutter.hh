@@ -2,6 +2,7 @@
 #define SUHTTER_HH
 
 #include <Arduino.h>
+#include "ShutterSwitch.hh"
 #include "tools.h"
 
 #define   MOTOR_DELAY       1500   // delay until motor reacts to input
@@ -14,22 +15,24 @@ using pin=const uint8_t;
 
 class Shutter {
   private:
-  uint8_t _id;
     pin _pins[2];
     uint8_t _position;
     bool _state[2];
     unsigned long _move_timestamp;
+    const uint8_t _EEPROMpos;
   public:
+    ShutterSwitch sSwitch;
     unsigned long move_duration;
     const long max_durations[2];
     bool running;
 
-    Shutter(uint8_t id, pin (&pinsIN)[2], const long (&motor_durationsIN)[2]) : 
-      _id(id),
+    Shutter(pin (&switchPinsIN)[2], pin (&pinsIN)[2], const long (&motor_durationsIN)[2], const uint8_t &EEPROMposIN) : 
       _pins{pinsIN[0], pinsIN[1]},
       _position(0),
       _state{MOTOR_OFF, MOTOR_DOWN},
       _move_timestamp(0),
+      _EEPROMpos(EEPROMposIN),
+      sSwitch(switchPinsIN),
       move_duration(0),
       max_durations{motor_durationsIN[0], motor_durationsIN[1]},
       running(true)
@@ -40,7 +43,7 @@ class Shutter {
         pinMode(p, OUTPUT);
         write();
       }
-      _position = EEPROM.read(_id);
+      _position = EEPROM.read(_EEPROMpos);
     }
     // change power/direction of motor
     void set(bool power, bool direction) {
@@ -61,7 +64,7 @@ class Shutter {
       set(MOTOR_OFF, MOTOR_DOWN);
       //TODO: add unfinished movement delta to _position
       _position += (millis() - _move_timestamp) / (max_durations[_state[1]]); //TODO: Maybe check if value is even legal
-      EEPROM.write(_id, _position);
+      EEPROM.write(_EEPROMpos, _position);
       running = false;
     }
     //TODO: check for timer completion and stop movement

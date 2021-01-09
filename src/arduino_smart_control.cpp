@@ -17,27 +17,17 @@
 
 Shutter shutters[8] = 
   {
-  // InputPin  OutputPin     Duration
-    {0, {25, 23}, {-28100, 26100}}, // Küche
-    {1, {28, 26}, {-28100, 26100}}, // Esszimmer
-    {2, {36, 34}, {-29500, 26100}}, // Wohnzimmer groß
-    {3, {32, 30}, {-19200, 17600}}, // Wohnzimmer klein
-    {4, {29, 27}, {-19200, 17800}}, // Lea links
-    {5, {24, 22}, {-19200, 17800}}, // Lea rechts
-    {6, {37, 35}, {-19200, 17600}}, // Bad
-    {7, {33, 31}, {-28100, 26100}}  // HaWi
+  // SwitchPin OutputPin Duration         EEPROMpos
+    {{51, 53}, {25, 23}, {-28100, 26100}, 0}, // Küche
+    {{43, 45}, {28, 26}, {-28100, 26100}, 1}, // Esszimmer
+    {{42, 40}, {36, 34}, {-29500, 26100}, 2}, // Wohnzimmer groß
+    {{44, 46}, {32, 30}, {-19200, 17600}, 3}, // Wohnzimmer klein
+    {{48, 38}, {29, 27}, {-19200, 17800}, 4}, // Lea links
+    {{50, 52}, {24, 22}, {-19200, 17800}, 5}, // Lea rechts
+    {{47, 49}, {37, 35}, {-19200, 17600}, 6}, // Bad
+    {{39, 41}, {33, 31}, {-28100, 26100}, 7}  // HaWi
   };
-ShutterSwitch switches[8] = 
-  {
-    {{51, 53}},
-    {{43, 45}},
-    {{42, 40}},
-    {{44, 46}},
-    {{48, 38}},
-    {{50, 52}},
-    {{47, 49}},
-    {{39, 41}}
-  };
+
 const uint8_t motor_amount = sizeof(shutters) / sizeof(shutters[0]);  // Number of relays in use
 const uint8_t relay_amount = motor_amount * 2;              // makes code more readable
 //unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
@@ -87,12 +77,12 @@ void loop() {
       shutters[i].update();
     }
     else { //TODO: Always check whether PinStateChanged. if motor is moving: stop and write position
-      if (switches[i].hasChanged()) {
-        switchAction(i, switches[i].getState());
+      if (shutters[i].sSwitch.hasChanged()) {
+        switchAction(i, shutters[i].sSwitch.getState());
       }
-      else if (switches[i].getState() != 0 && switches[i].timer > 0 && millis() - switches[i].timer > MOTOR_DELAY + (unsigned)abs(shutters[i].max_durations[i%2])) { // if max time exceeded
+      else if (shutters[i].sSwitch.getState() != 0 && shutters[i].sSwitch.timer > 0 && millis() - shutters[i].sSwitch.timer > MOTOR_DELAY + (unsigned)abs(shutters[i].max_durations[i%2])) { // if max time exceeded
         //i immer gerade, i%2 immer 0
-        switchAction(i, switches[i].getState()); //switch isn't released, but timer finished so do the same
+        switchAction(i, shutters[i].sSwitch.getState()); //switch isn't released, but timer finished so do the same
       }
     }
   }
@@ -154,12 +144,12 @@ void processCommand(void) {
 void switchAction(int switchID, int switchState) {
   if (switchState == 0) {
     shutters[switchID].set(MOTOR_ON, switchState);
-    switches[switchID].timer = millis();
+    shutters[switchID].sSwitch.timer = millis();
   } else {
     shutters[switchID].set(MOTOR_OFF, MOTOR_DOWN);
 
-    if (millis() - switches[switchID].timer > MOTOR_DELAY) {
-      int rel_movement = switchState * ((float)(millis() - switches[switchID].timer) / (MOTOR_DELAY + abs(shutters[switchID].max_durations[DIR2BOOL(switchState)])) * 100);
+    if (millis() - shutters[switchID].sSwitch.timer > MOTOR_DELAY) {
+      int rel_movement = switchState * ((float)(millis() - shutters[switchID].sSwitch.timer) / (MOTOR_DELAY + abs(shutters[switchID].max_durations[DIR2BOOL(switchState)])) * 100);
       // Make sure rel_movement is has legal value
       // Is this redundant?
       if (rel_movement > 100) {rel_movement = 100;}
@@ -174,7 +164,7 @@ void switchAction(int switchID, int switchState) {
       EEPROM.write(switchID, newPos);
     }
   }
-  switches[switchID].timer = 0; //reset switch timer once it's no longer in use
+  shutters[switchID].sSwitch.timer = 0; //reset switch timer once it's no longer in use
 }
 
 void serialCommand_set(void) {

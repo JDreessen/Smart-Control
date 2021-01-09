@@ -22,11 +22,13 @@ class ShutterSwitch {
       _risingEdge{_lastSwitchState[0], _lastSwitchState[1]},
       timer(0)
       {}
+    /* Does this constructor even make sense ???
     ShutterSwitch(pin (&pinsIN)[2], const uint8_t &stateIN) :
       _pins{pinsIN[0], pinsIN[1]},
       _state(stateIN),
       timer(0)
       {}
+    */
     
     int read(uint8_t i_pin) {return digitalRead(_pins[i_pin]);}
 
