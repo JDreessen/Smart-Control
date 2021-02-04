@@ -29,10 +29,11 @@ class ShutterSwitch {
       timer(0)
       {}
     */
+    ~ShutterSwitch();
     
-    int read(uint8_t i_pin) {return digitalRead(_pins[i_pin]);}
+    int read(uint8_t i_pin) const {return digitalRead(_pins[i_pin]);}
 
-    int debouncedRead(uint8_t i_pin) {
+    int debouncedRead(uint8_t i_pin) const{
       uint8_t counter = 0;
       for (int i = 0; i < 10; i++) {
         if (digitalRead(_pins[i_pin]) == LOW) {counter++;}
@@ -63,7 +64,7 @@ class ShutterSwitch {
 
     bool hasChanged() {return hasChanged(0) || hasChanged(1);}
 
-    int8_t getState() {return _state;}
+    const int8_t& getState() const {return _state;}
     //TODO: maybe read GPIO and set internal vars here
     void update() {
       //BAD, could be put into hasChanged()

@@ -37,13 +37,25 @@ class Shutter {
       max_durations{motor_durationsIN[0], motor_durationsIN[1]},
       running(true)
       {}
+    Shutter(pin (&switchPinsIN)[2], pin (&pinsIN)[2], const long (&motor_durationsIN)[2], const uint8_t &initialPosIN, const uint8_t &EEPROMposIN) : 
+      _pins{pinsIN[0], pinsIN[1]},
+      _position(initialPosIN),
+      _state{MOTOR_OFF, MOTOR_DOWN},
+      _move_timestamp(0),
+      _EEPROMpos(EEPROMposIN),
+      sSwitch(switchPinsIN),
+      move_duration(0),
+      max_durations{motor_durationsIN[0], motor_durationsIN[1]},
+      running(true)
+      {}
+    ~Shutter();
+    
     // set GIOP mode and initial state
     void setup() {
       for (pin p : _pins) {
         pinMode(p, OUTPUT);
         write();
       }
-      _position = EEPROM.read(_EEPROMpos);
     }
     // change power/direction of motor
     void set(bool power, bool direction) {
@@ -78,6 +90,10 @@ class Shutter {
         digitalWrite(_pins[0], _state[0]);
         digitalWrite(_pins[1], _state[1]);
     }
+    void overwritePos(const uint8_t pos) {
+      this->_position = pos;
+    }
+    const uint8_t& getEEPROMpos() const {return _EEPROMpos;}
 };
 
 #endif

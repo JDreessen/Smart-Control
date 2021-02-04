@@ -39,7 +39,7 @@ uint8_t send_buffer[8];
 CommandBuffer<HardwareSerial, MAX_DATA_LEN, TERMINATOR_CHAR> buffer(Serial1);
 
 //void processCmdTimer(uint8_t);
-void switchAction(int, int);
+void switchAction(Shutter&);
 void processCommand(void);
 void serialCommand_set(void);
 void updateRelays(void);
@@ -52,6 +52,7 @@ void setup() {
 
   for (Shutter s : shutters) {
     s.setup();
+    s.overwritePos(EEPROM.read(s.getEEPROMpos()));
   }
 }
 
@@ -76,14 +77,15 @@ void loop() {
       //processCmdTimer(i);
       shutters[i].update();
     }
-    else { //TODO: Always check whether PinStateChanged. if motor is moving: stop and write position
-      if (shutters[i].sSwitch.hasChanged()) {
-        switchAction(i, shutters[i].sSwitch.getState());
-      }
-      else if (shutters[i].sSwitch.getState() != 0 && shutters[i].sSwitch.timer > 0 && millis() - shutters[i].sSwitch.timer > MOTOR_DELAY + (unsigned)abs(shutters[i].max_durations[i%2])) { // if max time exceeded
-        //i immer gerade, i%2 immer 0
-        switchAction(i, shutters[i].sSwitch.getState()); //switch isn't released, but timer finished so do the same
-      }
+    //TODO: Always check whether PinStateChanged. if motor is moving: stop and write position
+    else if (shutters[i].sSwitch.hasChanged()) {
+      shutters[i].stop();
+      switchAction(shutters[i]);
+      //shutters[i].switchAction;
+    }
+    // if max time exceeded
+    else if (shutters[i].sSwitch.getState() != 0 && shutters[i].sSwitch.timer > 0 && millis() - shutters[i].sSwitch.timer > MOTOR_DELAY + (unsigned)abs(shutters[i].max_durations[i%2])) {
+      switchAction(shutters[i]); //switch isn't released, but timer finished so do the same
     }
   }
 
@@ -141,15 +143,16 @@ void processCommand(void) {
   }
 }
 
-void switchAction(int switchID, int switchState) {
+void switchAction(Shutter &shutter) {
+  const int8_t &switchState = shutter.sSwitch.getState();
   if (switchState == 0) {
-    shutters[switchID].set(MOTOR_ON, switchState);
-    shutters[switchID].sSwitch.timer = millis();
+    shutter.set(MOTOR_ON, switchState);
+    shutter.sSwitch.timer = millis();
   } else {
-    shutters[switchID].set(MOTOR_OFF, MOTOR_DOWN);
+    shutter.set(MOTOR_OFF, MOTOR_DOWN);
 
-    if (millis() - shutters[switchID].sSwitch.timer > MOTOR_DELAY) {
-      int rel_movement = switchState * ((float)(millis() - shutters[switchID].sSwitch.timer) / (MOTOR_DELAY + abs(shutters[switchID].max_durations[DIR2BOOL(switchState)])) * 100);
+    if (millis() - shutter.sSwitch.timer > MOTOR_DELAY) {
+      int rel_movement = shutter.sSwitch.getState() * ((float)(millis() - shutter.sSwitch.timer) / (MOTOR_DELAY + abs(shutter.max_durations[DIR2BOOL(switchState)])) * 100);
       // Make sure rel_movement is has legal value
       // Is this redundant?
       if (rel_movement > 100) {rel_movement = 100;}
@@ -158,13 +161,13 @@ void switchAction(int switchID, int switchState) {
         Serial.print("relative_movement: ");
         Serial.println(rel_movement);
       #endif
-      int newPos = (signed)EEPROM.read(switchID) + rel_movement;
+      int newPos = (signed)EEPROM.read(shutter.getEEPROMpos()) + rel_movement;
       if (newPos > 100) {newPos = 100;}
       else if (newPos < 0) {newPos = 0;}
-      EEPROM.write(switchID, newPos);
+      EEPROM.write(shutter.getEEPROMpos(), newPos);
     }
   }
-  shutters[switchID].sSwitch.timer = 0; //reset switch timer once it's no longer in use
+  shutter.sSwitch.timer = 0; //reset switch timer once it's no longer in use
 }
 
 void serialCommand_set(void) {
