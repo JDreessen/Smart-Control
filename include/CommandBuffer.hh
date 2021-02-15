@@ -21,6 +21,7 @@ class CommandBuffer {
                 _data = _serialInterface.read(); addData(_data);
             }
         }
+        ~CommandBuffer() {}
         bool available() { return _available; }
         
         // Put received character into the buffer.

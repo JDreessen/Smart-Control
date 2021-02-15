@@ -15,6 +15,7 @@ using pin=const uint8_t;
 
 class Shutter {
   private:
+    uint8_t _id;
     pin _pins[2];
     uint8_t _position;
     bool _state[2];
@@ -35,7 +36,7 @@ class Shutter {
       sSwitch(switchPinsIN),
       move_duration(0),
       max_durations{motor_durationsIN[0], motor_durationsIN[1]},
-      running(true)
+      running(false)
       {}
     Shutter(pin (&switchPinsIN)[2], pin (&pinsIN)[2], const long (&motor_durationsIN)[2], const uint8_t &initialPosIN, const uint8_t &EEPROMposIN) : 
       _pins{pinsIN[0], pinsIN[1]},
@@ -48,8 +49,7 @@ class Shutter {
       max_durations{motor_durationsIN[0], motor_durationsIN[1]},
       running(true)
       {}
-    ~Shutter();
-    
+    ~Shutter() {}
     // set GIOP mode and initial state
     void setup() {
       for (pin p : _pins) {

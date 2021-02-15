@@ -18,20 +18,21 @@ class ShutterSwitch {
    ShutterSwitch(pin (&pinsIN)[2]) :
       _pins{pinsIN[0], pinsIN[1]},
       _state{0},
-      _lastSwitchState{debouncedRead(0), debouncedRead(1)},
-      _risingEdge{_lastSwitchState[0], _lastSwitchState[1]},
       timer(0)
       {}
-    /* Does this constructor even make sense ???
+    // Does this constructor even make sense ???
     ShutterSwitch(pin (&pinsIN)[2], const uint8_t &stateIN) :
       _pins{pinsIN[0], pinsIN[1]},
       _state(stateIN),
       timer(0)
-      {}
-    */
-    ~ShutterSwitch();
-    
-    int read(uint8_t i_pin) const {return digitalRead(_pins[i_pin]);}
+      {
+        _lastSwitchState[0] = debouncedRead(pinsIN[0]);
+        _lastSwitchState[1] = debouncedRead(pinsIN[1]);
+        _risingEdge[0] = _lastSwitchState[0];
+        _risingEdge[1] = _lastSwitchState[1];
+      }
+    ~ShutterSwitch() {}
+    int read(uint8_t i_pin) {return digitalRead(this->_pins[i_pin]);}
 
     int debouncedRead(uint8_t i_pin) const{
       uint8_t counter = 0;
