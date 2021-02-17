@@ -25,13 +25,17 @@ class ShutterSwitch {
       _pins{pinsIN[0], pinsIN[1]},
       _state(stateIN),
       timer(0)
-      {
-        _lastSwitchState[0] = debouncedRead(pinsIN[0]);
-        _lastSwitchState[1] = debouncedRead(pinsIN[1]);
-        _risingEdge[0] = _lastSwitchState[0];
-        _risingEdge[1] = _lastSwitchState[1];
-      }
+      {}
     ~ShutterSwitch() {}
+    void setup() {
+      pinMode(_pins[0], INPUT_PULLUP);
+      pinMode(_pins[1], INPUT_PULLUP);
+      _lastSwitchState[0] = debouncedRead(_pins[0]);
+      _lastSwitchState[1] = debouncedRead(_pins[1]);
+      _risingEdge[0] = _lastSwitchState[0];
+      _risingEdge[1] = _lastSwitchState[1];
+    }
+
     int read(uint8_t i_pin) {return digitalRead(this->_pins[i_pin]);}
 
     int debouncedRead(uint8_t i_pin) const{
@@ -66,13 +70,15 @@ class ShutterSwitch {
     bool hasChanged() {return hasChanged(0) || hasChanged(1);}
 
     const int8_t& getState() const {return _state;}
-    //TODO: maybe read GPIO and set internal vars here
+    //TODO: maybe read GPIO and set internal vars here //???
+    /**
     void update() {
       //BAD, could be put into hasChanged()
       if (hasChanged(0)) { if (!_risingEdge[0]) {_state = 1;} }
       else if (hasChanged(1)) { if (!_risingEdge[1]) {_state = -1;} }
       else {_state = 0;}
     }
+    *//
 };
 
 #endif

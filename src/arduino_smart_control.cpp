@@ -1,7 +1,7 @@
 // Smart Control v0.99
 // WARNING: SWICTHES AND SERIAL INTEROPERABILITY IS WIP
  
-#define DEBUG false
+#define DEBUG true
 
 #include <Arduino.h>
 //#include <string.h>       // For strcmp()
@@ -14,7 +14,7 @@
 
 #define   MAX_DATA_LEN      3+16   // Max length of Serial transmission data (3 + motor_amount)
 #define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
-
+/*
 Shutter shutters[8] = 
   {
   // SwitchPin OutputPin Duration         EEPROMpos
@@ -27,16 +27,20 @@ Shutter shutters[8] =
     {{47, 49}, {37, 35}, {-19200, 17600}, 6}, // Bad
     {{39, 41}, {33, 31}, {-28100, 26100}, 7}  // HaWi
   };
-
+*/
+Shutter shutters[2] = {
+  {{6, 7}, {2, 3}, {-10000, 10000}, 0},
+  {{8, 9}, {4, 5}, {-15000, 15000}, 1}
+};
 const uint8_t motor_amount = sizeof(shutters) / sizeof(shutters[0]);  // Number of relays in use
-const uint8_t relay_amount = motor_amount * 2;              // makes code more readable
+//const uint8_t relay_amount = motor_amount * 2;              // makes code more readable
 //unsigned long message_age;                                  // For calculating end of relay switch duration after serial command
 
 //int8_t ser_rel_movement[8];
 
 uint8_t send_buffer[8];
 
-CommandBuffer<HardwareSerial, MAX_DATA_LEN, TERMINATOR_CHAR> buffer(Serial1);
+//CommandBuffer<HardwareSerial, MAX_DATA_LEN, TERMINATOR_CHAR> buffer(Serial1);
 
 //void processCmdTimer(uint8_t);
 void switchAction(Shutter&);
@@ -48,12 +52,15 @@ void setup() {
   #if DEBUG
     Serial.begin(9600);
   #endif
-  Serial1.begin(9600);
+  //Serial1.begin(9600);
 
-  for (Shutter s : shutters) {
+  for (Shutter& s : shutters) {
+    s.sSwitch.setup();
     s.setup();
     s.overwritePos(EEPROM.read(s.getEEPROMpos()));
   }
+  //TESTING: delay to see where bug is
+  //delay(5000);
 }
 
 void loop() {
@@ -72,21 +79,22 @@ void loop() {
     // }
   }
   */
-  for (int i = 0; i < motor_amount; i++) {
-    if (shutters[i].running) {
+  for (Shutter& shutter : shutters) {
+    if (shutter.running) {
       //processCmdTimer(i);
-      shutters[i].update();
+      shutter.update();
+      // react when switch has changed
+      if (shutter.sSwitch.getState() != 0 && shutter.sSwitch.timer > 0 && millis() - shutter.sSwitch.timer > MOTOR_DELAY + (unsigned)abs(shutter.max_durations[shutter.state[1]])) {
+        switchAction(shutter); //switch isn't released, but timer finished so do the same
+      }
     }
     //TODO: Always check whether PinStateChanged. if motor is moving: stop and write position
-    else if (shutters[i].sSwitch.hasChanged()) {
-      shutters[i].stop();
-      switchAction(shutters[i]);
+    else if (shutter.sSwitch.hasChanged()) {
+      //shutters[i].stop();
+      switchAction(shutter);
       //shutters[i].switchAction;
     }
-    // if max time exceeded
-    else if (shutters[i].sSwitch.getState() != 0 && shutters[i].sSwitch.timer > 0 && millis() - shutters[i].sSwitch.timer > MOTOR_DELAY + (unsigned)abs(shutters[i].max_durations[i%2])) {
-      switchAction(shutters[i]); //switch isn't released, but timer finished so do the same
-    }
+    // max switch timer check moved up
   }
 
   updateRelays(); 
@@ -94,11 +102,11 @@ void loop() {
 
 // Function to set motor relays according to the relay_outputs array
 void updateRelays(void) {
-  for (Shutter s : shutters) {
+  for (Shutter& s : shutters) {
     s.write();
   }
 }
-
+/*
 // process the data - command
 // strcmp compares two strings and returns 0 if they are the same.
 void processCommand(void) {
@@ -142,9 +150,10 @@ void processCommand(void) {
     Serial1.write(send_buffer, sizeof(send_buffer));
   }
 }
+*/
 
 void switchAction(Shutter &shutter) {
-  const int8_t &switchState = shutter.sSwitch.getState();
+  const int8_t& switchState = shutter.sSwitch.getState();
   if (switchState == 0) {
     shutter.set(MOTOR_ON, switchState);
     shutter.sSwitch.timer = millis();
@@ -166,10 +175,14 @@ void switchAction(Shutter &shutter) {
       else if (newPos < 0) {newPos = 0;}
       EEPROM.write(shutter.getEEPROMpos(), newPos);
     }
+    #if DEBUG
+    Serial.print("Final position: ");
+    Serial.println(EEPROM.read(shutter.getEEPROMpos()));
+    #endif
   }
   shutter.sSwitch.timer = 0; //reset switch timer once it's no longer in use
 }
-
+/*
 void serialCommand_set(void) {
   for (uint8_t i=0; i < (strlen(buffer.content)-3); i +=2) {
     uint8_t motorID = CHAR2INT(buffer.content[i+3]);
@@ -178,6 +191,7 @@ void serialCommand_set(void) {
     }
   }
 }
+*/
 //TODO: replace with shutter.update() (almost done)
 // void processCmdTimer(uint8_t motorID) {
 //   if (millis() - shutters >= shutters[motorID].move_duration) { //MOTOR_DELAY is accounted for

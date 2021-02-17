@@ -14,7 +14,7 @@ class CommandBuffer {
 
     public:
         char content[commandSize+1];
-        CommandBuffer(interfaceType serialInterface) : _serialInterface(serialInterface) {}
+        CommandBuffer(interfaceType& serialInterface) : _serialInterface(serialInterface) {}
         void update() {
             _available = false;
             while ( _serialInterface.available() > 0 && !_available) {

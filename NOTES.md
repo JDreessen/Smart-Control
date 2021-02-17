@@ -3,9 +3,11 @@
 - setting all 8 motors buggy
 
 # TODO
+- shutterSwitch is extremenly cluttered -> simplify class interface
+    - hasChanged() should update state (-1, 0, 1) and return whether it has changed
+    - in loop: if hasChanged(), set motor status according to switch.state
 - for MQTT, don't block new commands, instead finish motor movement prematurely (but save new position)
 - add README.md
-- (decrease RAM usage)
 - (maybe) cleanup processCommand funcion: similar to esp wifi server, if expression matches, ecexute atttached function. ex. commandHandler.attach("set", setCommand())
 
 # DONE
