@@ -3,8 +3,6 @@
 
 #include <Arduino.h>
 #include "ShutterSwitch.hh"
-#include <Preferences.h>
-#include <PubSubClient.h>
 #include "tools.h"
 
 #define   MOTOR_DELAY       1500   // delay until motor reacts to input
@@ -19,8 +17,6 @@ class Shutter {
     //uint8_t _id;
     pin _pins[2];
     int16_t _position; //TESTING: was uint, but changing how we calculate limits
-    static Preferences* _prefs;
-    static PubSubClient* _mqtt_client;
     const char* _name;
   public:
     ShutterSwitch sSwitch;
@@ -47,7 +43,7 @@ class Shutter {
       //sSwitch.setup();
       pinMode(_pins[0], OUTPUT);
       pinMode(_pins[1], OUTPUT);
-      overwritePos(_prefs->getShort(_name));
+      overwritePos();
       write();
     }
     // change power/direction of motor
@@ -72,7 +68,7 @@ class Shutter {
           _position += (float)(dt - MOTOR_DELAY) / (max_durations[state[1]]) * 100;
           if (_position > 100) _position = 100;
           else if (_position < 0) _position = 0;
-          _prefs->putShort(_name, _position);
+          //_prefs->putShort(_name, _position);
         }
         set(MOTOR_OFF, MOTOR_DOWN);
         running = 0;
@@ -108,10 +104,9 @@ class Shutter {
     }
     //NOTE: either set retained=false or always update status, otherwise status desyncs when handling command
     void publishPos() {
-        memcpy(mqtt_statusTopicBuf+mqtt_prefixLen, getName(), 2);
-        memcpy(mqtt_statusTopicBuf+mqtt_prefixLen+2, "/status", 8); // could be strcpy
-        uint8_t payload[4]; itoa(getPos(), (char*)payload, 10);
-        _mqtt_client->publish(mqtt_statusTopicBuf, payload, strlen((const char*)payload), false);
+      Serial1.print(_name);
+      Serial1.print(":");
+      Serial1.print(_position);
     }
     // stop moving, calc and write new position to EEPROM and set running=0
     void handleSwitch() {
@@ -128,10 +123,10 @@ class Shutter {
             break;
         }
     }
-    void handleCommand(byte* msg, uint len) {
+    void handleCommand(byte* msg, unsigned int len) {
       stopMovement();
       int tmp_newPos = 0;
-        for (int i = 0; i < len; ++i)
+        for (unsigned int i = 0; i < len; ++i)
           tmp_newPos = 10*tmp_newPos + CHAR2INT(msg[i]);
       moveTo(tmp_newPos);
     }
@@ -140,9 +135,7 @@ class Shutter {
         digitalWrite(_pins[0], state[0]);
         digitalWrite(_pins[1], state[1]);
     }
-    void overwritePos(const uint8_t pos) {
-      this->_position = pos;
-    }
+    void overwritePos() {}
     const int getPos() {return _position;}
     const char* getName() const {return this->_name;}
 

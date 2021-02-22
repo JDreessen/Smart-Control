@@ -3,25 +3,19 @@
 #define DEBUG true
 
 #include <Arduino.h>
-#include <Preferences.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
+#include <EEPROM.h>
 #include "creds.h"
 #include "config.h"
 #include "Shutter.hh"
 #include "ShutterSwitch.hh"
 #include "tools.h"
 
-WiFiClient wifi_client;
-PubSubClient mqtt_client(wifi_client);
-PubSubClient* Shutter::_mqtt_client(&mqtt_client);
-const char* mqtt_server = MQTT_SERVER;
+#define   MAX_DATA_LEN      6      // Max length of Serial transmission data (3 + motor_amount)
+#define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
 
-ulong MQTT_lastReconnectAttempt;
-const uint16_t MQTT_reconnectDelay = 5000;
-
-Preferences prefs;          // Create prefs object for NVS interaction
-Preferences* Shutter::_prefs(&prefs);
+// the buffer for the received chars
+// 1 extra char for the terminating character "\0"
+char g_buffer[MAX_DATA_LEN + 1];
 
 /*
 Shutter shutters[8] = 
@@ -46,94 +40,91 @@ Shutter shutters[] = {
 //int nShutters = sizeof(shutters) / sizeof(shutters[0]);
 
 void updateRelays(void);
-void callback(char*, byte*, unsigned int);
-void reconnect();
+void serialLoop(void);
+void addData(char);
+void processData(void);
 
 void setup() {
   #if DEBUG
     Serial.begin(9600);
   #endif
 
-  prefs.begin("NVS");
 
   for (Shutter& s : shutters) {
     s.sSwitch.setup();
     s.setup();
   }
-  // WiFi setup
-  WiFi.begin(SSID, PASS);
-  
-  // while (WiFi.status() != WL_CONNECTED) {
-  //   delay(100);
-  // }
-  // WiFi setup end
-
-  // MQTT setup
-  mqtt_client.setServer(mqtt_server, 1883);
-  mqtt_client.setCallback(callback);
-  // MQTT setup end
 }
 
 // improved loop
 void loop() {
   for (Shutter& shutter : shutters)
     shutter.loop();
-  if (!mqtt_client.connected())
-    reconnect();
-  else
-    mqtt_client.loop();
+  serialLoop();
 
   updateRelays();
 }
 
 
 // Function to set motor relays according to the relay_outputs array
-void updateRelays(void) {
+void updateRelays() {
   for (Shutter& s : shutters) {
     s.write();
   }
 }
-
-void callback(char* topic, byte* message, uint length) {
-  #ifdef DEBUG
-    Serial.print("Message recieved on Topic ");
-    Serial.print(topic);
-    Serial.print(": ");
-    for (int i = 0; i < length; ++i) Serial.write(message[i]);
-    Serial.write('\n');
-  #endif
-  //NOTE: getting status is probably only useful for debugging. May be removed at some point
-  //TODO: replace dynamicly allocated String by more robust char* of fixed length
-  // if (length == 3 && !memcmp(message, "get", 3)) {
-  //   String payload;
-  //   for (Shutter& shutter : shutters) {
-  //     payload += shutter.getName();
-  //     payload += ":";
-  //     payload += shutter.getPos();
-  //     payload += ",";
-  //   }
-  //   uint lenPayload = strlen(payload.c_str());
-  //   mqtt_client.publish(mqtt_statusTopic, (const uint8_t*)payload.c_str(), lenPayload, true);
-  // }
-  
-  // new implementation: topic check
-  for (Shutter& shutter : shutters) {
-    if (!memcmp(topic+mqtt_prefixLen, shutter.getName(), 2)) {
-      shutter.handleCommand(message, length);
+// Function to process incoming Serial data
+void serialLoop() {
+  int data;
+  while ( Serial1.available() > 0 ) {
+    data = Serial1.read(); addData((char)data);  
+    if (data == TERMINATOR_CHAR) {
+      processData();
     }
   }
 }
+// Put received character into the buffer.
+// When a complete command is received return true, otherwise return false.
+// The command is terminated by Enter character ("\r")
+void addData(char nextChar) {  
+  // This is position in the buffer where we put next char.
+  // Static var will remember its value across function calls.
+  static uint8_t currentIndex = 0;
 
-void reconnect() {
-  if (millis() - MQTT_lastReconnectAttempt > MQTT_reconnectDelay) {
-    if (mqtt_client.connect("ESP32S2")) {
-      mqtt_client.subscribe(mqtt_subTopic); //subscribe to subtopics of test/rollos
-      MQTT_lastReconnectAttempt = 0; // was in example but may be unnecessay
-      // publish motor positions on reconnect
-      
-      //memcpy(mqtt_statusTopicBuf, mqtt_topicPrefix, mqtt_prefixLen);
-      for (Shutter& shutter : shutters) {
-        shutter.publishPos();
+  // Ignore some characters - new line, space and tabs
+  if ((nextChar == '\n') || (nextChar == ' ') || (nextChar == '\t')) {
+    return;
+  }
+  
+  // If we receive Enter character...
+  if (nextChar == TERMINATOR_CHAR) {
+    // ...terminate the string by NULL character "\0" and return true
+    g_buffer[currentIndex] = '\0';
+    currentIndex = 0;
+    return;
+  }
+
+  // For normal character just store it in the buffer and increment Index
+  g_buffer[currentIndex] = nextChar;
+  currentIndex++;
+
+  // Check for too many chars
+  if (currentIndex >= MAX_DATA_LEN) {
+    // If data exceeds max length reset our position and return true
+    // so that the data received so far can be processed - the caller should
+    // see if it is valid command or not
+    g_buffer[MAX_DATA_LEN] = '\0';
+    currentIndex = 0;
+    return;
+  }
+}
+
+// process the data - command
+void processData(void) {
+  if (g_buffer[2] == ':' && g_buffer[6] == '\0') {
+    for (Shutter& shutter : shutters) {
+      if (!memcmp(g_buffer, shutter.getName(), 2)) {
+        shutter.stopMovement();
+        shutter.moveTo(atoi(g_buffer+3));
       }
     }
   }
