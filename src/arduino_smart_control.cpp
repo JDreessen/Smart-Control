@@ -1,23 +1,23 @@
 // Smart Control v1.0-SNAPSHOT1
 
-#define DEBUG true
+#define DEBUG false
 
 #include <Arduino.h>
-#include <EEPROM.h>
+//#include <EEPROM.h>
 #include "creds.h"
 #include "config.h"
 #include "Shutter.hh"
 #include "ShutterSwitch.hh"
 #include "tools.h"
 
-#define   MAX_DATA_LEN      6      // Max length of Serial transmission data (3 + motor_amount)
+#define   MAX_DATA_LEN      7      // Max length of Serial transmission data (3 + motor_amount)
 #define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
 
 // the buffer for the received chars
 // 1 extra char for the terminating character "\0"
 char g_buffer[MAX_DATA_LEN + 1];
 
-/*
+///*
 Shutter shutters[8] = 
   {
   // SwitchPin OutputPin Duration         NVSkey
@@ -30,13 +30,15 @@ Shutter shutters[8] =
     {{47, 49}, {37, 35}, {-19200, 17600}, "M6"}, // Bad
     {{39, 41}, {33, 31}, {-28100, 26100}, "M7"}  // HaWi
   };
-*/
+//*/
 //TODO: maybe put into struct and make shutters accessible by name
 //TODO: alternatively replace array with map
+/*
 Shutter shutters[] = {
   {{6, 7}, {3, 2}, {-10000, 10000}, "M0"},
   {{8, 9}, {5, 4}, {-15000, 15000}, "M1"}
 };
+*/
 //int nShutters = sizeof(shutters) / sizeof(shutters[0]);
 
 void updateRelays(void);
@@ -48,6 +50,7 @@ void setup() {
   #if DEBUG
     Serial.begin(9600);
   #endif
+  Serial1.begin(9600);
 
 
   for (Shutter& s : shutters) {
@@ -120,6 +123,9 @@ void addData(char nextChar) {
 
 // process the data - command
 void processData(void) {
+  #if DEBUG
+    Serial.println(g_buffer);
+  #endif
   if (g_buffer[2] == ':' && g_buffer[6] == '\0') {
     for (Shutter& shutter : shutters) {
       if (!memcmp(g_buffer, shutter.getName(), 2)) {

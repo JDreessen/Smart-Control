@@ -2,6 +2,7 @@
 #define SUHTTER_HH
 
 #include <Arduino.h>
+#include <EEPROM.h>
 #include "ShutterSwitch.hh"
 #include "tools.h"
 
@@ -29,13 +30,13 @@ class Shutter {
     Shutter(pin (&switchPinsIN)[2], pin (&pinsIN)[2], const long (&motor_durationsIN)[2], const char* NVSkeyIN) : 
       _pins{pinsIN[0], pinsIN[1]},
       _position(0),
-      state{MOTOR_OFF, MOTOR_DOWN},
-      move_timestamp(0),
       _name(NVSkeyIN),
       sSwitch(switchPinsIN),
       move_duration(0),
+      move_timestamp(0),
       max_durations{motor_durationsIN[0], motor_durationsIN[1]},
-      running(0)
+      running(0),
+      state{MOTOR_OFF, MOTOR_DOWN}
       {}
     ~Shutter() {}
     // set GIOP mode and initial state
@@ -69,14 +70,19 @@ class Shutter {
           if (_position > 100) _position = 100;
           else if (_position < 0) _position = 0;
           //_prefs->putShort(_name, _position);
+          //TODO: save pos to eeprom
+          EEPROM.write(CHAR2INT(_name[1]), _position);
+          
         }
         set(MOTOR_OFF, MOTOR_DOWN);
         running = 0;
       }
       //TESTING
-      Serial.print(_name);
-      Serial.print(" Position:");
-      Serial.println(_position);
+      #if DEBUG
+        Serial.print(_name);
+        Serial.print(" Position:");
+        Serial.println(_position);
+      #endif
     }
     // start moving up, save current time and set running=1
     void moveUp() {
@@ -107,20 +113,27 @@ class Shutter {
       Serial1.print(_name);
       Serial1.print(":");
       Serial1.print(_position);
+      Serial1.print('\r');
+      #if DEBUG
+        Serial.print(_name);
+        Serial.print(":");
+        Serial.print(_position);
+        Serial.print('\r');
+      #endif
     }
     // stop moving, calc and write new position to EEPROM and set running=0
     void handleSwitch() {
       stopMovement();
       switch(sSwitch.getState()) {
-          case 0:
-            publishPos();
-            break;
-          case 1:
-            moveUp();
-            break;
-          case -1:
-            moveDown();
-            break;
+        case 0:
+          publishPos();
+          break;
+        case -1:
+          moveUp();
+          break;
+        case 1:
+          moveDown();
+          break;
         }
     }
     void handleCommand(byte* msg, unsigned int len) {
@@ -135,7 +148,8 @@ class Shutter {
         digitalWrite(_pins[0], state[0]);
         digitalWrite(_pins[1], state[1]);
     }
-    void overwritePos() {}
+    void overwritePos(short newPos) {_position = newPos;}
+    void overwritePos() {overwritePos(EEPROM.read(CHAR2INT(_name[1])));}
     const int getPos() {return _position;}
     const char* getName() const {return this->_name;}
 
