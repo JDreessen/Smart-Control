@@ -3,36 +3,33 @@
 #define DEBUG false
 
 #include <Arduino.h>
-//#include <EEPROM.h>
-#include "creds.h"
-#include "config.h"
 #include "Shutter.hh"
 #include "ShutterSwitch.hh"
 #include "tools.h"
 
-#define   MAX_DATA_LEN      7      // Max length of Serial transmission data (3 + motor_amount)
+#define   MAX_DATA_LEN      9      // Max length of Serial transmission data (1x statusBit + 2x motorName + 5x message + 1x terminator)
 #define   TERMINATOR_CHAR   '\r'   // Termination char for Serial message
 
 // the buffer for the received chars
 // 1 extra char for the terminating character "\0"
 char g_buffer[MAX_DATA_LEN + 1];
 
+
 ///*
 Shutter shutters[8] = 
   {
-  // SwitchPin OutputPin Duration         NVSkey
-    {{51, 53}, {25, 23}, {-28100, 26100}, "M0"}, // Küche
-    {{43, 45}, {28, 26}, {-28100, 26100}, "M1"}, // Esszimmer
-    {{42, 40}, {36, 34}, {-29500, 26100}, "M2"}, // Wohnzimmer groß
-    {{44, 46}, {32, 30}, {-19200, 17600}, "M3"}, // Wohnzimmer klein
-    {{48, 38}, {29, 27}, {-19200, 17800}, "M4"}, // Lea links
-    {{50, 52}, {24, 22}, {-19200, 17800}, "M5"}, // Lea rechts
-    {{47, 49}, {37, 35}, {-19200, 17600}, "M6"}, // Bad
-    {{39, 41}, {33, 31}, {-28100, 26100}, "M7"}  // HaWi
+  // good Duration values: (-28100, 26100), (-29500, 26100), (-19200, 17800)
+  // SwitchPin OutputPin NVSkey
+    {{51, 53}, {25, 23}, "M0"}, // Küche
+    {{43, 45}, {28, 26}, "M1"}, // Esszimmer
+    {{42, 40}, {36, 34}, "M2"}, // Wohnzimmer groß
+    {{44, 46}, {32, 30}, "M3"}, // Wohnzimmer klein
+    {{48, 38}, {29, 27}, "M4"}, // Lea links
+    {{50, 52}, {24, 22}, "M5"}, // Lea rechts
+    {{47, 49}, {37, 35}, "M6"}, // Bad
+    {{39, 41}, {33, 31}, "M7"}  // HaWi
   };
 //*/
-//TODO: maybe put into struct and make shutters accessible by name
-//TODO: alternatively replace array with map
 /*
 Shutter shutters[] = {
   {{6, 7}, {3, 2}, {-10000, 10000}, "M0"},
@@ -126,12 +123,51 @@ void processData(void) {
   #if DEBUG
     Serial.println(g_buffer);
   #endif
-  if (g_buffer[2] == ':' && g_buffer[6] == '\0') {
-    for (Shutter& shutter : shutters) {
-      if (!memcmp(g_buffer, shutter.getName(), 2)) {
-        shutter.stopMovement();
-        shutter.moveTo(atoi(g_buffer+3));
+  //WIP: add ability to configure delays via mqtt
+  //NOTE: putting switch statement into for loop may be cleaner
+  switch (g_buffer[0]) {
+    case 's':
+      for (Shutter& shutter : shutters) {
+        if (!memcmp(g_buffer+1, shutter.getName(), 2)) {
+          shutter.stopMovement();
+          shutter.moveTo(atoi(g_buffer+3)); //TODO: maybe sanitize input via min(abs(atoi(bla)), 65535)
+          break;
+        }
       }
-    }
+      break;
+    case 'u':
+      for (Shutter& shutter : shutters) {
+        if (!memcmp(g_buffer+1, shutter.getName(), 2)) {
+          shutter.updateMaxUpDuration(atoi(g_buffer+3));
+          break;
+        }
+      }
+      break;
+    case 'd':
+      for (Shutter& shutter : shutters) {
+        if (!memcmp(g_buffer+1, shutter.getName(), 2)) {
+          shutter.updateMaxDownDuration(atoi(g_buffer+3));
+          break;
+        }
+      }
+      break;
+    case 'r':
+      for (Shutter& shutter : shutters) {
+        if (!memcmp(g_buffer+1, shutter.getName(), 2)) {
+          shutter.updateReactionDelay(atoi(g_buffer+3));
+          break;
+        }
+      }
+      break;
   }
+
+  // if (g_buffer[2] == ':' && g_buffer[6] == '\0') {
+  //   for (Shutter& shutter : shutters) {
+  //     if (!memcmp(g_buffer, shutter.getName(), 2)) {
+  //       shutter.stopMovement();
+  //       shutter.moveTo(atoi(g_buffer+3));
+  //     }
+  //   }
+  // }
+  //END WIP
 }
