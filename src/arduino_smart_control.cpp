@@ -1,6 +1,6 @@
-// Smart Control v1.0-SNAPSHOT1
+// Smart Control v1.0-SNAPSHOT2
 
-#define DEBUG true
+#define DEBUG false
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -37,13 +37,15 @@ Shutter shutters[8] =
     {{39, 41}, {33, 31}, {-28100, 26100}, "M7"}  // HaWi
   };
 */
-//TODO: maybe put into struct and make shutters accessible by name
-//TODO: alternatively replace array with map
+
 Shutter shutters[] = {
-  {{6, 7}, {3, 2}, {-10000, 10000}, "M0"},
-  {{8, 9}, {5, 4}, {-15000, 15000}, "M1"}
+// SwitchPin OutputPin NVSkey
+// Make sure NVSkey has 2 characters
+  {{7, 6}, {18, 20}, "M0"},    //Naomi
+  {{5, 4}, {19, 21}, "M1"},    //Eltern
+  //{{X, X}, {26, 33}, "M2"},  //Bad
+  {{3, 2}, {34, 35}, "M3"}     //Josuha
 };
-//int nShutters = sizeof(shutters) / sizeof(shutters[0]);
 
 void updateRelays(void);
 void callback(char*, byte*, unsigned int);
@@ -54,7 +56,7 @@ void setup() {
     Serial.begin(9600);
   #endif
 
-  prefs.begin("NVS");
+  prefs.begin("NVS", false);
 
   for (Shutter& s : shutters) {
     s.sSwitch.setup();
@@ -95,46 +97,47 @@ void updateRelays(void) {
 }
 
 void callback(char* topic, byte* message, uint length) {
-  #ifdef DEBUG
+  #if DEBUG
     Serial.print("Message recieved on Topic ");
     Serial.print(topic);
     Serial.print(": ");
     for (int i = 0; i < length; ++i) Serial.write(message[i]);
     Serial.write('\n');
   #endif
-  //NOTE: getting status is probably only useful for debugging. May be removed at some point
-  //TODO: replace dynamicly allocated String by more robust char* of fixed length
-  // if (length == 3 && !memcmp(message, "get", 3)) {
-  //   String payload;
-  //   for (Shutter& shutter : shutters) {
-  //     payload += shutter.getName();
-  //     payload += ":";
-  //     payload += shutter.getPos();
-  //     payload += ",";
-  //   }
-  //   uint lenPayload = strlen(payload.c_str());
-  //   mqtt_client.publish(mqtt_statusTopic, (const uint8_t*)payload.c_str(), lenPayload, true);
-  // }
-  
-  // new implementation: topic check
-  for (Shutter& shutter : shutters) {
-    if (!memcmp(topic+mqtt_prefixLen, shutter.getName(), 2)) {
-      shutter.handleCommand(message, length);
+  //WIP overwrite max duration in NVS
+  //TODO dynamically calculate offset so motor length can have variable length
+  if (!memcmp(topic+mqtt_prefixLen+3, "timer", 5)) {
+    for (Shutter& shutter : shutters) {
+      if (!memcmp(topic+mqtt_prefixLen, shutter.getName(), 2)) {
+        if (!memcmp(topic+mqtt_prefixLen+9, "up", 2))
+          shutter.updateTimerUp(message, length);
+        else if (!memcmp(topic+mqtt_prefixLen+9, "down", 4))
+          shutter.updateTimerDown(message, length);
+      }
+    }
+  }
+  else {//*/
+    for (Shutter& shutter : shutters) {
+      if (!memcmp(topic+mqtt_prefixLen, shutter.getName(), 2)) {
+        shutter.handleCommand(message, length);
+        break;      
+      }
     }
   }
 }
 
 void reconnect() {
   if (millis() - MQTT_lastReconnectAttempt > MQTT_reconnectDelay) {
-    if (mqtt_client.connect("ESP32S2")) {
-      mqtt_client.subscribe(mqtt_subTopic); //subscribe to subtopics of test/rollos
-      MQTT_lastReconnectAttempt = 0; // was in example but may be unnecessay
-      // publish motor positions on reconnect
+    if (mqtt_client.connect(MQTT_NAME)) {
+      mqtt_client.subscribe(mqtt_subTopic);           //subscribe to shutter command topic
+      mqtt_client.subscribe(mqttSub_durationsTopic);  //subscribe to shutter max_durations topic
       
-      //memcpy(mqtt_statusTopicBuf, mqtt_topicPrefix, mqtt_prefixLen);
+      MQTT_lastReconnectAttempt = 0;                  // was in example but may be unnecessay
+      // publish motor positions on reconnect
       for (Shutter& shutter : shutters) {
         shutter.publishPos();
       }
     }
+    else MQTT_lastReconnectAttempt = millis();
   }
 }

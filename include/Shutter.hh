@@ -18,19 +18,20 @@ class Shutter {
   private:
     //uint8_t _id;
     pin _pins[2];
-    int16_t _position; //TESTING: was uint, but changing how we calculate limits
+    int16_t _position;
     static Preferences* _prefs;
     static PubSubClient* _mqtt_client;
     const char* _name;
+    const String _pref_timers[2];
   public:
     ShutterSwitch sSwitch;
     unsigned long move_duration; // For movement by command
     unsigned long move_timestamp;
-    const long max_durations[2];
+    long max_durations[2];
     uint8_t running;
     bool state[2];
 
-    Shutter(pin (&switchPinsIN)[2], pin (&pinsIN)[2], const long (&motor_durationsIN)[2], const char* NVSkeyIN) : 
+    Shutter(pin (&switchPinsIN)[2], pin (&pinsIN)[2], const char* NVSkeyIN) : 
       _pins{pinsIN[0], pinsIN[1]},
       _position(0),
       state{MOTOR_OFF, MOTOR_DOWN},
@@ -38,16 +39,18 @@ class Shutter {
       _name(NVSkeyIN),
       sSwitch(switchPinsIN),
       move_duration(0),
-      max_durations{motor_durationsIN[0], motor_durationsIN[1]},
+      _pref_timers{String(_name) + "_up", String(_name) + "_down"},
       running(0)
       {}
     ~Shutter() {}
-    // set GIOP mode and initial state
+    // set GPIO mode and initial state
     void setup() {
       //sSwitch.setup();
       pinMode(_pins[0], OUTPUT);
       pinMode(_pins[1], OUTPUT);
-      overwritePos(_prefs->getShort(_name));
+      overwritePos(_prefs->getUChar(_name));
+      max_durations[0] = _prefs->getLong(_pref_timers[0].c_str());
+      max_durations[1] = _prefs->getLong(_pref_timers[1].c_str());
       write();
     }
     // change power/direction of motor
@@ -69,34 +72,29 @@ class Shutter {
       if (running > 0) {
         unsigned long dt = millis() - move_timestamp;
         if (dt >= MOTOR_DELAY) {
-          _position += (float)(dt - MOTOR_DELAY) / (max_durations[state[1]]) * 100;
+          _position += round((float)(dt - MOTOR_DELAY) / (max_durations[state[1]]) * 100);
           if (_position > 100) _position = 100;
           else if (_position < 0) _position = 0;
-          _prefs->putShort(_name, _position);
+          _prefs->putUChar(_name, (uint8_t)_position);
         }
         set(MOTOR_OFF, MOTOR_DOWN);
         running = 0;
       }
-      //TESTING
-      Serial.print(_name);
-      Serial.print(" Position:");
-      Serial.println(_position);
+      #if DEBUG
+        Serial.print(_name);
+        Serial.print(" Position:");
+        Serial.println(_position);
+      #endif
     }
-    // start moving up, save current time and set running=1
-    void moveUp() {
-      set(MOTOR_ON, MOTOR_UP);
+    // start moving in direction, save current time and set running=1
+    void move(bool direction) {
+      set(MOTOR_ON, direction);
       move_timestamp = millis();
       running = 1;
     }
-    // start moving down, save current time and set running=1
-    void moveDown() {
-      set(MOTOR_ON, MOTOR_DOWN);
-      move_timestamp = millis();
-      running = 1;
-    }
-    //check if max move duration is exceeded and stop movement
+    //check if max move duration is exceeded (with margin for self-callibration) and stop movement
     void checkExceedingMaxDuration() {
-      if (running == 1 && millis() - move_timestamp >= abs(max_durations[state[1]])) { //MOTOR_DELAY is accounted for
+      if (running == 1 && millis() - move_timestamp >= abs(max_durations[state[1]]) + MOTOR_DELAY + 1000) {
         stopMovement();
         publishPos();
       }
@@ -104,6 +102,7 @@ class Shutter {
     void checkCommandTimerCompletion() {
       if (running == 2 && millis() - move_timestamp >= move_duration) {
         stopMovement();
+        publishPos();  // Also publish pos when command is done?
       }
     }
     //NOTE: either set retained=false or always update status, otherwise status desyncs when handling command
@@ -121,18 +120,32 @@ class Shutter {
             publishPos();
             break;
           case 1:
-            moveUp();
+            move(MOTOR_UP);
             break;
           case -1:
-            moveDown();
+            move(MOTOR_DOWN);
             break;
         }
+    }
+    //WIP
+    void updateTimerUp(byte* msg, uint len) {
+      max_durations[0] = 0;
+      for (int i = 0; i < len; ++i)
+        max_durations[0] = 10*max_durations[0] + CHAR2INT(msg[i]);
+      max_durations[0] = -max_durations[0];
+      _prefs->putLong(_pref_timers[0].c_str(), max_durations[0]);
+    }
+    void updateTimerDown(byte* msg, uint len) {
+      max_durations[1] = 0;
+      for (int i = 0; i < len; ++i)
+        max_durations[1] = 10*max_durations[1] + CHAR2INT(msg[i]);
+      _prefs->putLong(_pref_timers[1].c_str(), max_durations[1]);
     }
     void handleCommand(byte* msg, uint len) {
       stopMovement();
       int tmp_newPos = 0;
-        for (int i = 0; i < len; ++i)
-          tmp_newPos = 10*tmp_newPos + CHAR2INT(msg[i]);
+      for (int i = 0; i < len; ++i)
+        tmp_newPos = 10*tmp_newPos + CHAR2INT(msg[i]);
       moveTo(tmp_newPos);
     }
     // write changes to GPIO
@@ -143,7 +156,7 @@ class Shutter {
     void overwritePos(const uint8_t pos) {
       this->_position = pos;
     }
-    const int getPos() {return _position;}
+    const int getPos() const {return _position;}
     const char* getName() const {return this->_name;}
 
     void loop() {

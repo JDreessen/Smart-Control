@@ -6,10 +6,10 @@
 
 
 class ShutterSwitch {
-  using Pin=const uint8_t;
+  using pin=const uint8_t;
   
   private:
-    Pin _pins[2];
+    pin _pins[2];
     int8_t _state;
     bool _lastSwitchState[2];
     bool _risingEdge[2];
@@ -17,15 +17,9 @@ class ShutterSwitch {
   public:
    unsigned long timer;
 
-   ShutterSwitch(Pin (&pinsIN)[2]) :
+   ShutterSwitch(pin (&pinsIN)[2]) :
       _pins{pinsIN[0], pinsIN[1]},
       _state{0},
-      timer(0)
-      {}
-    // Does this constructor even make sense ???
-    ShutterSwitch(Pin (&pinsIN)[2], const uint8_t &stateIN) :
-      _pins{pinsIN[0], pinsIN[1]},
-      _state(stateIN),
       timer(0)
       {}
     ~ShutterSwitch() {}
@@ -72,15 +66,6 @@ class ShutterSwitch {
     }
 
     const int8_t& getState() const {return _state;}
-    //TODO: maybe read GPIO and set internal vars here //???
-    /*
-    void update() {
-      //BAD, could be put into hasChanged()
-      if (hasChanged(0)) { if (!_risingEdge[0]) {_state = 1;} }
-      else if (hasChanged(1)) { if (!_risingEdge[1]) {_state = -1;} }
-      else {_state = 0;}
-    }
-    */
 };
 
 #endif
